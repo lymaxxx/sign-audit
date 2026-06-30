@@ -1,0 +1,38 @@
+:root {
+  --teal-dark: #1f4a4a;
+  --teal: #3f7a78;
+  --teal-light: #6fa8a5;
+  --red: #c1432b;
+  --red-dark: #8e2c1d;
+  --cream: #f3ecd8;
+  --cream-dark: #e6dcbe;
+  --ink: #1b2b2a;
+
+  font-family: 'Inter', system-ui, sans-serif;
+  color-scheme: light;
+  background-color: var(--cream);
+  color: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--cream);
+}
+
+h1, h2, h3, .display {
+  font-family: 'Bebas Neue', 'Inter', sans-serif;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+}

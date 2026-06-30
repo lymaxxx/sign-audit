@@ -1,0 +1,268 @@
+.page {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--cream);
+  border-bottom: 2px solid var(--teal-dark);
+}
+
+.navbar-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-name {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 22px;
+  letter-spacing: 0.08em;
+  color: var(--teal-dark);
+}
+
+.navbar nav {
+  display: flex;
+  gap: 24px;
+}
+
+.navbar nav a {
+  text-decoration: none;
+  font-weight: 600;
+  color: var(--teal-dark);
+  font-size: 15px;
+}
+
+.navbar nav a:hover {
+  color: var(--red);
+}
+
+.hero {
+  position: relative;
+  background: linear-gradient(180deg, var(--teal-dark), var(--teal));
+  color: var(--cream);
+  padding: 72px 24px 88px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.hero-bg {
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(243, 236, 216, 0.04) 0px,
+    rgba(243, 236, 216, 0.04) 2px,
+    transparent 2px,
+    transparent 24px
+  );
+}
+
+.hero-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.hero-title {
+  font-size: clamp(32px, 6vw, 56px);
+  color: var(--cream);
+}
+
+.hero-tagline {
+  font-size: 18px;
+  color: var(--cream-dark);
+  margin: 0;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btn {
+  display: inline-block;
+  padding: 12px 24px;
+  border-radius: 4px;
+  font-weight: 700;
+  text-decoration: none;
+  font-size: 15px;
+  border: 2px solid transparent;
+}
+
+.btn-primary {
+  background: var(--red);
+  color: var(--cream);
+  border-color: var(--red-dark);
+}
+
+.btn-primary:hover {
+  background: var(--red-dark);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--cream);
+  border-color: var(--cream-dark);
+}
+
+.btn-ghost:hover {
+  background: rgba(243, 236, 216, 0.1);
+}
+
+.section {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 64px 24px;
+  width: 100%;
+}
+
+.section-alt {
+  background: var(--cream-dark);
+  max-width: none;
+}
+
+.section-alt > * {
+  max-width: 1000px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.section-title {
+  font-size: 36px;
+  color: var(--teal-dark);
+  margin-bottom: 24px;
+  border-bottom: 3px solid var(--red);
+  display: inline-block;
+  padding-bottom: 6px;
+}
+
+.history-grid {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 32px;
+  line-height: 1.6;
+}
+
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.timeline li {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  border-left: 3px solid var(--teal);
+  padding-left: 14px;
+}
+
+.timeline-year {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 20px;
+  color: var(--red);
+  min-width: 70px;
+}
+
+.identity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.identity-card {
+  background: var(--cream);
+  border: 2px solid var(--teal-dark);
+  border-radius: 6px;
+  padding: 20px;
+}
+
+.identity-card h3 {
+  font-size: 22px;
+  color: var(--teal-dark);
+  margin-bottom: 10px;
+}
+
+.identity-card p {
+  line-height: 1.5;
+  margin: 0;
+}
+
+.swatches {
+  display: grid;
+  gap: 8px;
+}
+
+.swatch {
+  padding: 12px;
+  border-radius: 4px;
+  color: var(--cream);
+  font-weight: 700;
+  font-size: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.anthem-player {
+  margin-bottom: 32px;
+}
+
+.anthem-player audio {
+  width: 100%;
+  max-width: 480px;
+}
+
+.anthem-lyrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px;
+}
+
+.anthem-verse h3 {
+  font-size: 18px;
+  color: var(--red);
+  margin-bottom: 8px;
+}
+
+.anthem-verse p {
+  margin: 0 0 4px;
+  line-height: 1.5;
+}
+
+.footer {
+  margin-top: auto;
+  background: var(--teal-dark);
+  color: var(--cream);
+  text-align: center;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.footer p {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.85;
+}
