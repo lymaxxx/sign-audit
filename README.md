@@ -70,15 +70,30 @@ design — and every per-stop edit layered over it — untouched.
 
 ## Running it
 
+**Nothing installed.** Download `Algach.html` and double-click it. One file, no server, no toolchain —
+the fonts and the whole application are inlined, so it runs straight off a disk. It is the complete app;
+what it does not have is a native menu and system file dialogs, so files arrive through the browser's
+downloads instead.
+
+**Nothing installed, but you want the real `.app`.** Run the *Build macOS app* workflow from the Actions
+tab. GitHub's own Mac machines build it and attach `Algach.app` and a `.dmg` to the run.
+
+**Locally.** Needs Node 20.19+ and, for the native shell, Rust 1.77+ and Xcode command line tools:
+
 ```bash
 npm install
-npm run dev          # the app in a browser, for development
-npm run tauri dev    # the real window, on a Mac
-npm run tauri build  # a signed .app and .dmg
+npm run dev           # the app in a browser
+npm run build:single  # regenerate Algach.html
+npm run tauri dev     # the real window, on a Mac
+npm run tauri build   # .app and .dmg
 ```
 
-The layout engine, the importers and the PDF writer are platform-independent and run anywhere. Building
-the `.app` itself needs macOS with Xcode command line tools and a Rust toolchain.
+The layout engine, the importers and the PDF writer are platform-independent and run anywhere; only the
+`.app` itself needs macOS.
+
+The builds are unsigned, so macOS quarantines them on download. Right-click the app and choose **Open**
+(a plain double-click will not offer that), or `xattr -dr com.apple.quarantine Algach.app`. Removing the
+warning for good needs a paid Apple Developer account.
 
 ## Checking it
 
@@ -87,7 +102,8 @@ npm test             # engine, importers, segmentation, layout geometry
 npm run proof        # render the demo network across a spread of panel sizes
 npm run proof:png    # …and rasterise them to look at
 npx tsx scripts/proof-pdf.ts && npx tsx scripts/check-pdf.ts
-node scripts/check-app.mjs   # drives the running app, needs `npm run dev`
+npm run check:app     # drives the running app, needs `npm run dev`
+npm run check:single  # opens Algach.html off the disk, as a person would
 ```
 
 `check-pdf.ts` reads the PDF object graph rather than grepping the bytes — pdf-lib packs objects into

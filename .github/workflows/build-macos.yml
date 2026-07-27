@@ -1,0 +1,90 @@
+name: Build macOS app
+
+# Builds the .app and .dmg on GitHub's own Mac machines, so nobody needs Xcode,
+# Rust or Node installed to get a working application. Run it from the Actions
+# tab and download the result from the run's Artifacts section.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths-ignore:
+      - '**/*.md'
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            label: Apple Silicon
+          - target: x86_64-apple-darwin
+            label: Intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Rust builds around 400 crates the first time; caching keeps later runs
+      # to a couple of minutes.
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - run: npm ci
+
+      - name: Check
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Build the app
+        run: npm run tauri build -- --target ${{ matrix.target }}
+
+      # Unsigned, so macOS will quarantine it on download. The README says how
+      # to open it; signing needs a paid Apple Developer account.
+      - name: Collect the build
+        run: |
+          mkdir -p out
+          cp -R "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Algach.app" out/
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg out/ || true
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Algach-${{ matrix.target }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+
+  single-file:
+    name: Single-file build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # One HTML file that runs off a disk, for anyone who wants to try the
+      # thing without installing a toolchain or waiting for a Mac runner.
+      - run: npm run build:single
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Algach-single-file
+          path: Algach.html
+          if-no-files-found: error

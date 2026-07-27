@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Генератор макетов расписаний общественного транспорта",
+  "description": "Transit schedule layout generator",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -13,7 +13,10 @@
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
     "proof": "tsx scripts/proof.ts",
-    "proof:png": "tsx scripts/proof.ts && node scripts/shoot.mjs"
+    "proof:png": "tsx scripts/proof.ts && node scripts/shoot.mjs",
+    "build:single": "vite build --config vite.config.single.ts && node scripts/bundle-single.mjs",
+    "check:single": "node scripts/check-single.mjs",
+    "check:app": "node scripts/check-app.mjs"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",

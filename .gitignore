@@ -22,3 +22,6 @@ src-tauri/gen
 
 # Проверочные рендеры
 proof-out
+
+# Single-file build intermediate
+dist-single
