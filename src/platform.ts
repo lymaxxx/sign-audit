@@ -27,9 +27,17 @@ const pickViaInput = (filters: FileFilter[], multiple = false): Promise<PickedFi
     const accept = filters.flatMap((f) => f.extensions.map((e) => `.${e}`)).join(',')
     if (accept) input.accept = accept
 
+    let settled = false
+    const done = (files: PickedFile[]) => {
+      if (settled) return
+      settled = true
+      input.remove()
+      resolve(files)
+    }
+
     input.onchange = async () => {
       const files = [...(input.files ?? [])]
-      resolve(
+      done(
         await Promise.all(
           files.map(async (file) => ({
             name: file.name,
@@ -38,13 +46,28 @@ const pickViaInput = (filters: FileFilter[], multiple = false): Promise<PickedFi
         ),
       )
     }
-    // A cancelled picker fires nothing, so the promise simply never settles;
-    // resolve on focus returning to the window instead.
+
+    // Dismissing the picker fires nothing in older browsers, which would leave
+    // the promise hanging. Modern ones have a `cancel` event; where there is
+    // none, focus returning to the window stands in for it.
+    input.oncancel = () => done([])
+
     window.addEventListener(
       'focus',
-      () => setTimeout(() => resolve(input.files?.length ? [] : []), 300),
+      () => {
+        // Only ever settles as a dismissal. A real choice is settled by
+        // `change`, and `input.files` is populated before that fires — so
+        // checking it here cannot race with reading the file, which is async
+        // and would otherwise lose every import to this fallback.
+        setTimeout(() => {
+          if (!input.files?.length) done([])
+        }, 500)
+      },
       { once: true },
     )
+
+    input.style.display = 'none'
+    document.body.appendChild(input)
     input.click()
   })
 

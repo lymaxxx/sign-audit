@@ -76,7 +76,7 @@ what it does not have is a native menu and system file dialogs, so files arrive 
 downloads instead.
 
 **Nothing installed, but you want the real `.app`.** Run the *Build macOS app* workflow from the Actions
-tab. GitHub's own Mac machines build it and attach `Algach.app` and a `.dmg` to the run.
+tab. GitHub's own Mac machines build it and attach a `.dmg` to the run — take that one; see below.
 
 **Locally.** Needs Node 20.19+ and, for the native shell, Rust 1.77+ and Xcode command line tools:
 
@@ -91,9 +91,21 @@ npm run tauri build   # .app and .dmg
 The layout engine, the importers and the PDF writer are platform-independent and run anywhere; only the
 `.app` itself needs macOS.
 
-The builds are unsigned, so macOS quarantines them on download. Right-click the app and choose **Open**
-(a plain double-click will not offer that), or `xattr -dr com.apple.quarantine Algach.app`. Removing the
-warning for good needs a paid Apple Developer account.
+### macOS says the app is damaged
+
+It is not. The builds are unsigned, so macOS quarantines anything downloaded and reports it that way.
+Open the `.dmg`, drag the app across, then clear the flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Algach.app
+```
+
+Recent versions of macOS no longer offer a way past this through right-click → Open, so the command is
+the reliable route. Getting rid of the warning altogether needs a paid Apple Developer account for
+signing and notarisation.
+
+Prefer the `.dmg` over the `.app` zip. A `.app` is a directory whose executable bit and internal symlinks
+matter, and not every archiver preserves them; a disk image always does.
 
 ## Checking it
 
@@ -104,6 +116,7 @@ npm run proof:png    # …and rasterise them to look at
 npx tsx scripts/proof-pdf.ts && npx tsx scripts/check-pdf.ts
 npm run check:app     # drives the running app, needs `npm run dev`
 npm run check:single  # opens Algach.html off the disk, as a person would
+npm run check:import  # imports the example CSVs through the file picker
 ```
 
 `check-pdf.ts` reads the PDF object graph rather than grepping the bytes — pdf-lib packs objects into

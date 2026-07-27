@@ -17,7 +17,8 @@
     "build:single": "vite build --config vite.config.single.ts && node scripts/bundle-single.mjs",
     "check:single": "node scripts/check-single.mjs",
     "check:app": "node scripts/check-app.mjs",
-    "examples": "tsx scripts/make-examples.ts"
+    "examples": "tsx scripts/make-examples.ts",
+    "check:import": "node scripts/check-import.mjs"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",

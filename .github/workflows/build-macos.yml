@@ -54,14 +54,41 @@ jobs:
       - name: Build the app
         run: npm run tauri build -- --target ${{ matrix.target }}
 
-      # Unsigned, so macOS will quarantine it on download. The README says how
-      # to open it; signing needs a paid Apple Developer account.
+      # An .app is a directory whose executable bit and internal symlinks are
+      # load-bearing, and the artifact upload re-zips whatever it is given
+      # without preserving either — which produces a bundle macOS reports as
+      # "damaged". So nothing is uploaded as a directory: the .dmg goes as it
+      # is, and the .app is sealed with ditto, which keeps permissions,
+      # symlinks and resource forks intact.
       - name: Collect the build
         run: |
+          set -euo pipefail
+          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
           mkdir -p out
-          cp -R "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Algach.app" out/
-          cp src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg out/ || true
+
+          ditto -c -k --sequesterRsrc --keepParent "$bundle/macos/Algach.app" "out/Algach-${{ matrix.target }}.zip"
+          cp "$bundle"/dmg/*.dmg out/
+
+          # Prove the archive still holds a runnable binary before shipping it.
+          rm -rf verify && mkdir verify
+          ditto -x -k "out/Algach-${{ matrix.target }}.zip" verify
+          test -x "verify/Algach.app/Contents/MacOS/Algach"
+          echo "executable bit survived the round trip"
+
           ls -la out
+
+      - name: How to open it
+        run: |
+          cat <<'NOTE'
+          The build is unsigned, so macOS quarantines it on download and
+          reports it as damaged. Clear the flag after unpacking:
+
+              xattr -dr com.apple.quarantine /Applications/Algach.app
+
+          Right-click and Open no longer offers a way past this on recent
+          macOS. Removing the warning for good needs a paid Apple Developer
+          account for signing and notarisation.
+          NOTE
 
       - uses: actions/upload-artifact@v4
         with:
