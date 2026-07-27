@@ -135,17 +135,39 @@ export const importGtfs = (zip: Uint8Array): ImportResult => {
     routeId: string
     dayTypeLabel: string
     headsign: string
+    /** What a passenger at this kerb would call the way the bus is facing. */
+    direction: string
   }
   const trips = new Map<string, TripInfo>()
   for (const row of tripRows) {
     const id = row.trip_id?.trim()
     const routeId = row.route_id?.trim()
     if (!id || !routeId) continue
+
+    const headsign = row.trip_headsign?.trim() ?? ''
+    const directionId = row.direction_id?.trim() ?? ''
+    // The headsign names the direction far better than "0" and "1" do; the id
+    // is only the fallback, and only when the feed distinguishes the two.
+    const direction = headsign || (directionId ? `Direction ${directionId}` : '')
+
     trips.set(id, {
       routeId,
       dayTypeLabel: serviceLabels.get(row.service_id?.trim() ?? '') ?? 'Daily',
-      headsign: row.trip_headsign?.trim() ?? '',
+      headsign,
+      direction,
     })
+  }
+
+  // Only split a shelter when the feed actually serves it both ways; otherwise
+  // every stop would gain a direction suffix it does not need.
+  const directionsPerStop = new Map<string, Set<string>>()
+  for (const row of stopTimeRows) {
+    const trip = trips.get(row.trip_id?.trim() ?? '')
+    const stopId = row.stop_id?.trim()
+    if (!trip || !stopId || !trip.direction) continue
+    const seen = directionsPerStop.get(stopId) ?? new Set<string>()
+    seen.add(trip.direction)
+    directionsPerStop.set(stopId, seen)
   }
 
   const dayTypes = new Map<string, DayType>()
@@ -162,11 +184,14 @@ export const importGtfs = (zip: Uint8Array): ImportResult => {
   const usedRoutes = new Set<string>()
   let skipped = 0
 
+  // One entry per side of a shelter, created as the times are read.
+  const sides = new Map<string, Stop>()
+
   for (const row of stopTimeRows) {
     const trip = trips.get(row.trip_id?.trim() ?? '')
     if (!trip) continue
-    const stop = stops.get(row.stop_id?.trim() ?? '')
-    if (!stop) continue
+    const place = stops.get(row.stop_id?.trim() ?? '')
+    if (!place) continue
 
     const raw = row.departure_time?.trim() || row.arrival_time?.trim()
     if (!raw) continue
@@ -181,10 +206,26 @@ export const importGtfs = (zip: Uint8Array): ImportResult => {
     // A headsign on the trip is more specific than the route's long name.
     if (trip.headsign && !route.terminal) route.terminal = trip.headsign
 
-    usedRoutes.add(route.id)
-    usedStops.add(stop.id)
+    const bothWays = (directionsPerStop.get(place.id)?.size ?? 0) > 1
+    const direction = bothWays ? trip.direction : ''
+    const sideId = direction ? `${place.id}-${direction.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : place.id
 
-    const key = departuresKey(route.id, stop.id, dayTypeIdFor(trip.dayTypeLabel))
+    let side = sides.get(sideId)
+    if (!side) {
+      side = {
+        id: sideId,
+        name: place.name,
+        placeId: place.id,
+        ...(place.code ? { code: place.code } : {}),
+        ...(direction ? { direction } : {}),
+      }
+      sides.set(sideId, side)
+    }
+
+    usedRoutes.add(route.id)
+    usedStops.add(side.id)
+
+    const key = departuresKey(route.id, side.id, dayTypeIdFor(trip.dayTypeLabel))
     const list = departures.get(key)
     if (list) list.push(time)
     else departures.set(key, [time])
@@ -211,7 +252,7 @@ export const importGtfs = (zip: Uint8Array): ImportResult => {
   return {
     timetable: {
       routes: [...routes.values()].filter((r) => usedRoutes.has(r.id)),
-      stops: [...stops.values()].filter((s) => usedStops.has(s.id)),
+      stops: [...sides.values()].filter((s) => usedStops.has(s.id)),
       dayTypes: [...dayTypes.values()],
       departures,
     },

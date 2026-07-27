@@ -91,53 +91,93 @@ interface Slot {
   window?: Window
 }
 
-/**
- * Peel the day's opening and closing departures off a leading or trailing
- * headway, for every column at once.
- *
- * Done jointly: if any column can spare departures, the row is added to all of
- * them, so a column with a thin early service leaves a blank rather than
- * pushing everything below it out of step.
- */
-const peelJoint = (
-  columns: AlignedSections[],
+/** Split `count` departures off one end of a headway, leaving the rest behind. */
+const splitOff = (
+  section: Section,
   edge: 'first' | 'last',
   count: number,
-  rules: SegmentRules,
-): AlignedSections[] => {
-  if (count <= 0) return columns
-  const index = edge === 'first' ? 0 : columns[0]!.length - 1
+): { anchor: Section; remainder: Section } | null => {
+  if (section.kind !== 'interval' || section.times.length < 2) return null
+  const take = Math.min(count, section.times.length - 1)
+  if (take < 1) return null
 
-  const takes = columns.map((sections) => {
-    const section = sections[index]
-    if (!section || section.kind !== 'interval') return 0
-    return Math.min(count, Math.max(0, section.times.length - rules.minTripsForInterval))
-  })
+  const taken = edge === 'first' ? section.times.slice(0, take) : section.times.slice(-take)
+  const rest = edge === 'first' ? section.times.slice(take) : section.times.slice(0, -take)
 
-  if (takes.every((t) => t === 0)) return columns
+  return {
+    anchor: {
+      kind: 'times',
+      from: taken[0]!,
+      to: taken[taken.length - 1]!,
+      times: taken,
+      peeled: edge,
+    },
+    remainder: {
+      ...section,
+      times: rest,
+      ...(edge === 'first' ? { from: rest[0] ?? section.from } : { to: rest[rest.length - 1] ?? section.to }),
+    },
+  }
+}
 
-  return columns.map((sections, col) => {
-    const take = takes[col]!
-    const section = sections[index]
-    let peeled: Section | null = null
+/**
+ * Give every headway a departure to be counted from, and one to be counted to.
+ *
+ * "Every 30 minutes" says nothing on its own — from when, until when? So a
+ * column showing a headway also shows the service's first and last departures.
+ * Where the day already lists departures either side of it, those serve; where
+ * it does not, they are split off the headway itself.
+ *
+ * Anchoring is decided per column but written into rows shared by all of them,
+ * so a block stays aligned even when only one kind of day needed one. Tying
+ * this to the headway rather than to the first and last slots matters: a day
+ * whose closing departure falls past the snapped end of its window already has
+ * a slot there, while a day ending exactly on the boundary does not.
+ */
+const anchorIntervals = (columns: AlignedSections[], rules: SegmentRules): AlignedSections[] => {
+  if (columns.length === 0 || columns[0]!.length === 0) return columns
+  let work = columns.map((c) => [...c])
 
-    if (take > 0 && section && section.kind === 'interval') {
-      const taken =
-        edge === 'first' ? section.times.slice(0, take) : section.times.slice(section.times.length - take)
-      const rest =
-        edge === 'first' ? section.times.slice(take) : section.times.slice(0, section.times.length - take)
+  const intervalAt = (index: number) => work.some((c) => c[index]?.kind === 'interval')
+  const width = work[0]!.length
 
-      sections = [...sections]
-      sections[index] = {
-        ...section,
-        times: rest,
-        ...(edge === 'first' ? { from: rest[0] ?? section.from } : { to: rest[rest.length - 1] ?? section.to }),
-      }
-      peeled = { kind: 'times', from: taken[0]!, to: taken[taken.length - 1]!, times: taken }
-    }
+  const first = [...Array(width).keys()].find(intervalAt)
+  if (first === undefined) return work
+  const last = [...Array(width).keys()].reverse().find(intervalAt)!
 
-    return edge === 'first' ? [peeled, ...sections] : [...sections, peeled]
-  })
+  const anchor = (edge: 'first' | 'last', intervalIndex: number, slotIndex: number) => {
+    work.forEach((sections, col) => {
+      const section = sections[intervalIndex]
+      if (section?.kind !== 'interval') return
+      // Already anchored on this side by departures the day itself lists.
+      if (sections[slotIndex]) return
+
+      const wanted = Math.max(1, edge === 'first' ? rules.firstTripsCount : rules.lastTripsCount)
+      const split = splitOff(section, edge, wanted)
+      if (!split) return
+
+      sections[intervalIndex] = split.remainder
+      sections[slotIndex] = split.anchor
+      work[col] = sections
+    })
+  }
+
+  // A headway in the very first slot has nowhere to put its opening
+  // departures, so a row is made for them; the same at the other end.
+  if (first === 0) {
+    work = work.map((c) => [null, ...c])
+    anchor('first', 1, 0)
+  } else {
+    anchor('first', first, first - 1)
+  }
+
+  const lastNow = last + (first === 0 ? 1 : 0)
+  if (lastNow === work[0]!.length - 1) work = work.map((c) => [...c, null])
+  anchor('last', lastNow, lastNow + 1)
+
+  // Drop any row nobody ended up using.
+  const used = work[0]!.map((_, i) => work.some((c) => c[i] !== null))
+  return work.map((c) => c.filter((_, i) => used[i]))
 }
 
 /**
@@ -161,8 +201,15 @@ export const segmentDayTypes = (timesByDayType: Minutes[][], rules: SegmentRules
   )
 
   // Nothing regular anywhere: one section each, so the columns still pair up.
+  // The choice between a flat list and an hour-by-hour grid is made once for
+  // all of them, or a busy weekday would print a grid beside a Saturday list.
   if (windows.length === 0) {
-    return cleaned.map((times) => (times.length === 0 ? [] : [classifyIrregular(times, rules)]))
+    const grid = cleaned.some((times) => times.length >= rules.hourlyThreshold)
+    return cleaned.map((times) =>
+      times.length === 0
+        ? []
+        : [{ kind: grid ? 'hourly' : 'times', from: times[0]!, to: times[times.length - 1]!, times }],
+    )
   }
 
   if (rules.snapBoundariesToHour) {
@@ -185,13 +232,25 @@ export const segmentDayTypes = (timesByDayType: Minutes[][], rules: SegmentRules
   }
   slots.push({ kind: 'gap', from: cursor, to: Infinity })
 
-  const filled = cleaned.map((times) =>
-    slots.map((slot): Section | null => {
-      const inSlot = between(times, slot.from, slot.to)
+  const perSlot = slots.map((slot) => cleaned.map((times) => between(times, slot.from, slot.to)))
+
+  const filled = cleaned.map((_, col) =>
+    slots.map((slot, index): Section | null => {
+      const inSlot = perSlot[index]![col]!
       if (inSlot.length === 0) return null
-      return slot.kind === 'window'
-        ? fillWindow(inSlot, slot.window!, rules)
-        : classifyIrregular(inSlot, rules)
+      if (slot.kind === 'window') return fillWindow(inSlot, slot.window!, rules)
+
+      // Whether an irregular stretch is listed flat or set out hour by hour is
+      // decided for the row, not for each column. Weekdays crossing the
+      // threshold while Saturday falls just under it would otherwise print a
+      // grid beside a list, in one block, for the same stretch of the day.
+      const grid = perSlot[index]!.some((t) => t.length >= rules.hourlyThreshold)
+      return {
+        kind: grid ? 'hourly' : 'times',
+        from: inSlot[0]!,
+        to: inSlot[inSlot.length - 1]!,
+        times: inSlot,
+      }
     }),
   )
 
@@ -220,13 +279,5 @@ export const segmentDayTypes = (timesByDayType: Minutes[][], rules: SegmentRules
   let columns = merged.map((sections) => sections.filter((_, i) => used[i]))
   if (columns[0]?.length === 0) return columns
 
-  const keptSlots = runs
-    .filter((_, i) => used[i])
-    .map((run) => (run.length === 1 ? slots[run[0]!]! : { kind: 'gap' as const, from: 0, to: 0 }))
-  if (keptSlots[0]?.kind === 'window') columns = peelJoint(columns, 'first', rules.firstTripsCount, rules)
-  if (keptSlots[keptSlots.length - 1]?.kind === 'window') {
-    columns = peelJoint(columns, 'last', rules.lastTripsCount, rules)
-  }
-
-  return columns
+  return anchorIntervals(columns, rules)
 }

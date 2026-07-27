@@ -16,7 +16,8 @@ const HEADER_HINTS: Record<keyof ColumnMapping, string[]> = {
   stopCode: ['stop_code', 'stopcode', 'code', 'код'],
   dayType: ['day', 'daytype', 'service', 'calendar', 'день', 'дни', 'тип дня', 'режим'],
   times: ['time', 'times', 'departure', 'departures', 'время', 'времена', 'отправление', 'рейс'],
-  terminal: ['terminal', 'destination', 'headsign', 'to', 'конечная', 'направление', 'до'],
+  terminal: ['terminal', 'destination', 'headsign', 'to', 'конечная', 'до'],
+  direction: ['direction', 'dir', 'towards', 'bound', 'направление', 'сторона'],
   via: ['via', 'streets', 'through', 'через', 'улицы'],
   mode: ['mode', 'type', 'transport', 'вид', 'тип транспорта'],
   color: ['color', 'colour', 'цвет'],
@@ -62,6 +63,7 @@ export const guessMapping = (header: string[], rows: string[][] = []): ColumnMap
   // Most specific first, so "stop_code" is not eaten by "stop".
   claim('stopCode', HEADER_HINTS.stopCode)
   claim('dayType', HEADER_HINTS.dayType)
+  claim('direction', HEADER_HINTS.direction)
   claim('route', HEADER_HINTS.route)
   claim('stop', HEADER_HINTS.stop)
   claim('terminal', HEADER_HINTS.terminal)
@@ -140,14 +142,30 @@ const upsertRoute = (b: Builder, number: string, fields: Partial<Route> = {}): R
   return route
 }
 
-const upsertStop = (b: Builder, name: string, code?: string): Stop => {
-  const id = `s-${slug(name)}`
+/**
+ * Find or create one side of a stop.
+ *
+ * With a direction given, the two sides of a shelter become separate stops
+ * that share a `placeId`. Each then lays out and exports on its own, which is
+ * what a passenger standing on one side of the road actually needs.
+ */
+const upsertStop = (b: Builder, name: string, code?: string, direction?: string): Stop => {
+  const placeId = `s-${slug(name)}`
+  const id = direction ? `${placeId}-${slug(direction)}` : placeId
+
   const existing = b.stops.get(id)
   if (existing) {
     if (!existing.code && code) existing.code = code
     return existing
   }
-  const stop: Stop = { id, name, ...(code ? { code } : {}) }
+
+  const stop: Stop = {
+    id,
+    name,
+    placeId,
+    ...(code ? { code } : {}),
+    ...(direction ? { direction } : {}),
+  }
   b.stops.set(id, stop)
   return stop
 }
@@ -203,6 +221,7 @@ export interface ImportDefaults {
   stop?: string
   dayType?: string
   route?: string
+  direction?: string
 }
 
 export const importTable = (
@@ -235,9 +254,11 @@ export const importTable = (
     })
 
     const dayType = upsertDayType(b, cell(row, mapping.dayType) || defaults.dayType || 'Daily')
+    const direction = cell(row, mapping.direction) || defaults.direction || undefined
 
     if (wideForm) {
-      // One trip per row; every column from here is a stop.
+      // One trip per row; every column from here is a stop. The direction is
+      // a property of the trip, so every stop on the row takes it.
       for (let col = mapping.timeColumnsFrom!; col < table.header.length; col++) {
         const stopName = (table.header[col] ?? '').trim()
         if (!stopName) continue
@@ -249,7 +270,7 @@ export const importTable = (
           issues.push({ severity: 'warning', message: `Could not read the time "${raw}".`, where })
           continue
         }
-        const stop = upsertStop(b, stopName)
+        const stop = upsertStop(b, stopName, undefined, direction)
         addDepartures(b, route.id, stop.id, dayType.id, [time])
       }
       return
@@ -260,7 +281,7 @@ export const importTable = (
       issues.push({ severity: 'warning', message: 'No stop on this row; skipped.', where })
       return
     }
-    const stop = upsertStop(b, stopName, cell(row, mapping.stopCode) || undefined)
+    const stop = upsertStop(b, stopName, cell(row, mapping.stopCode) || undefined, direction)
 
     const raw = cell(row, mapping.times)
     const times = parseTimeList(raw)

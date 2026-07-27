@@ -685,11 +685,11 @@ const RulesPanel = () => {
       </Group>
 
       <Group title="Edges of the day">
-        <Field label="First departures shown">
-          <NumberInput value={t.rules.firstTripsCount} min={0} onChange={(v) => edit('Rules', (tpl) => void (tpl.rules.firstTripsCount = v))} />
+        <Field label="First departures shown" hint="a headway always shows at least one">
+          <NumberInput value={t.rules.firstTripsCount} min={1} onChange={(v) => edit('Rules', (tpl) => void (tpl.rules.firstTripsCount = v))} />
         </Field>
-        <Field label="Last departures shown">
-          <NumberInput value={t.rules.lastTripsCount} min={0} onChange={(v) => edit('Rules', (tpl) => void (tpl.rules.lastTripsCount = v))} />
+        <Field label="Last departures shown" hint="…and the one it runs to">
+          <NumberInput value={t.rules.lastTripsCount} min={1} onChange={(v) => edit('Rules', (tpl) => void (tpl.rules.lastTripsCount = v))} />
         </Field>
         <Toggle label="Round headway spans to whole hours" value={t.rules.snapBoundariesToHour} onChange={(v) => edit('Rules', (tpl) => void (tpl.rules.snapBoundariesToHour = v))} />
         <Toggle label="Print service after midnight as 24:37" value={t.rules.postMidnightAsHour24} onChange={(v) => edit('Rules', (tpl) => void (tpl.rules.postMidnightAsHour24 = v))} />

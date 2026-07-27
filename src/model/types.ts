@@ -19,6 +19,15 @@ export interface Route {
   notes: string[]
 }
 
+/**
+ * One side of one stop.
+ *
+ * A shelter serving both directions is two of these, not one. The times differ
+ * — outbound and inbound reach the same kerb at different minutes — and a
+ * passenger standing at one of them has no use for the other's departures. So
+ * direction is part of a stop's identity here, and each side gets its own
+ * sheet.
+ */
 export interface Stop {
   id: string
   name: string
@@ -26,6 +35,8 @@ export interface Stop {
   code?: string
   /** Which way vehicles face here — feeds the `{direction}` title token. */
   direction?: string
+  /** Shared by both sides of one shelter, for grouping them in the stop list. */
+  placeId?: string
 }
 
 /** Weekday / weekend / daily / school-day — agencies differ, so this is open. */

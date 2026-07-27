@@ -231,6 +231,13 @@ select {
   gap: 6px;
 }
 
+.stop-direction {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .stop-meta {
   display: flex;
   align-items: center;

@@ -6,6 +6,36 @@ network appears in the stop list.
 Regenerate and re-check them with `npx tsx scripts/make-examples.ts` — it writes the files and then reads
 them back, because an example that does not import is worse than no example.
 
+## A whole network, both ways
+
+**`schedule-network-two-directions.csv`** is the shape a planning department actually hands over: every
+route, every stop on it, and a `Direction` column. This is the one to copy.
+
+```csv
+Route,Mode,Direction,Terminal,Stop,Stop code,Day type,Times
+1,bus,Southbound,Rosia Terminus,Market Place,101,Weekdays,07:00 07:30 08:00 …
+1,bus,Northbound,Willis's Road Terminus,Market Place,101,Weekdays,07:20 07:50 …
+```
+
+Each side of a shelter becomes its own stop in the list, and its own sheet. That is not tidiness: a
+vehicle reaches the two kerbs at different minutes, and someone waiting on one of them has no use for the
+other's departures.
+
+### Name the side of the road, not the route's terminal
+
+This is the one thing worth getting right. `Direction` should say which way the traffic faces —
+`Southbound`, `Towards the town centre`, `Platform B` — and every route calling at that kerb should use
+the same wording.
+
+Naming it after each route's own terminal looks natural and quietly goes wrong: routes 1 and 9 both stop
+at Market Place, but if one says `Towards Rosia` and the other `Towards the Airport`, the shelter turns
+into three sheets instead of two, and neither route appears beside the other.
+
+A stop served one way only needs no `Direction` at all — leave the cell empty and it stays a single sheet.
+
+GTFS needs nothing extra: `direction_id` and `trip_headsign` already carry this, and a stop is split only
+where the feed really serves it both ways.
+
 ## The two shapes
 
 **`schedule-minimal.csv`** — the smallest thing that works. Four columns, one row per route and kind of
@@ -44,6 +74,7 @@ whole words, in English or Russian, and can be in any order.
 | `Route` | line, маршрут, номер | Printed on the badge |
 | `Stop` | station, остановка | |
 | `Stop code` | code, код | Used in export filenames |
+| `Direction` | towards, bound, направление | Splits a shelter into a sheet per side |
 | `Day type` | service, calendar, тип дня | Becomes a column on the sheet; omitted means `Daily` |
 | `Times` | departure, время, рейс | One departure or a whole run of them |
 | `Terminal` | destination, headsign, конечная | The headsign |
@@ -68,3 +99,17 @@ first of the morning:
 Both print as `24:11` unless that is turned off in **Rules**.
 
 A row that cannot be read is reported with its line number and skipped. The rest of the file still imports.
+
+## What the sheet does with all this
+
+Two things follow from the data rather than from any setting, and both are visible in these examples.
+
+**Identical days collapse.** `schedule-identical-days.csv` states the same service under three headings.
+The sheet prints it once, with no headings at all — three identical columns under `Weekdays`, `Saturday`
+and `Sunday` tell a passenger nothing they can act on.
+
+**A headway is always anchored.** Wherever a stretch of the day prints as *every 30 minutes*, the first
+and last departures are printed with it. On its own a headway does not say when the service starts or
+stops, and "every 30 minutes" from an unstated hour is not a timetable. Where the day already lists
+departures either side of the headway those are used; where it does not, they are taken from the headway
+itself.

@@ -25,6 +25,20 @@ export interface StopEdits {
 
 export const editKey = (routeId: string, dayTypeId: string): string => `${routeId} ${dayTypeId}`
 
+/** Same sections, same departures, same headways — nothing to tell apart. */
+const sameColumn = (a: AlignedSections, b: AlignedSections): boolean => {
+  if (a.length !== b.length) return false
+  return a.every((left, i) => {
+    const right = b[i]
+    if (!left || !right) return left === right
+    if (left.kind !== right.kind) return false
+    if (left.kind === 'interval' && right.kind === 'interval') {
+      if (left.min !== right.min || left.max !== right.max) return false
+    }
+    return left.times.length === right.times.length && left.times.every((t, j) => t === right.times[j])
+  })
+}
+
 export const emptyEdits = (): StopEdits => ({})
 
 /**
@@ -63,10 +77,17 @@ export const buildSheetBlocks = (
       return override ?? auto
     })
 
+    // Weekday and weekend service is often word for word the same. Printing it
+    // three times under three headings says nothing a passenger can act on, so
+    // identical columns collapse to one and the headings go with them.
+    const identical = columns.length > 1 && columns.every((c) => sameColumn(c, columns[0]!))
+    const finalColumns = identical ? [columns[0]!] : columns
+    const finalDayTypes = identical ? [{ id: dayTypes[0]!.id, label: '' }] : dayTypes
+
     return {
       route,
-      dayTypes,
-      rows: buildRows(columns, tpl.block, tpl.rules),
+      dayTypes: finalDayTypes,
+      rows: buildRows(finalColumns, tpl.block, tpl.rules),
     }
   })
 }

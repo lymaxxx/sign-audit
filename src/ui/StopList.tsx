@@ -57,6 +57,9 @@ export const StopList = ({ overflowing }: { overflowing: Set<string> }) => {
                   {edited ? <em className="dot" title="Has edits of its own" /> : null}
                   {overflowing.has(stop.id) ? <em className="flag" title="Does not fit" /> : null}
                 </span>
+                {/* Both sides of a shelter are separate entries; the direction
+                    is what tells them apart. */}
+                {stop.direction ? <span className="stop-direction">→ {stop.direction}</span> : null}
                 <span className="stop-meta">
                   {stop.code ? <em>{stop.code}</em> : null}
                   {routes.map((r) => (

@@ -85,10 +85,127 @@ const minimal = (): string =>
     csvRow(['83', 'Aurora Cinema', 'Weekends', '22:44 23:26 24:11 24:58']),
   ].join('\n') + '\n'
 
+/**
+ * A whole small network: every route, every stop on it, both ways.
+ *
+ * The shape a planning department actually hands over. One shelter appears
+ * twice — once per direction — because the outbound and inbound sheets are
+ * different documents: the times differ, and a passenger on one side of the
+ * road has no use for the other side's departures.
+ */
+const network = (): string => {
+  const lines = [csvRow(['Route', 'Mode', 'Direction', 'Terminal', 'Stop', 'Stop code', 'Day type', 'Times'])]
+
+  // Direction names the side of the road, not the route's terminal. Both
+  // lines call at Market Place, and a passenger waiting there is on one of two
+  // kerbs — not on "towards Rosia" for one route and "towards the airport" for
+  // another. Naming sides per route would give that shelter three sheets.
+  const SIDES: [string, string] = ['Southbound', 'Northbound']
+
+  const corridors: Array<{
+    number: string
+    mode: string
+    ends: [string, string]
+    stops: Array<{ name: string; code: string }>
+    firstOut: number
+    headway: number
+    trips: number
+  }> = [
+    {
+      number: '1',
+      mode: 'bus',
+      ends: ['Rosia Terminus', "Willis's Road Terminus"],
+      stops: [
+        { name: 'Market Place', code: '101' },
+        { name: 'Queensway', code: '102' },
+        { name: 'Trafalgar Cemetery', code: '103' },
+        { name: 'Rosia Parade', code: '104' },
+      ],
+      firstOut: 7 * 60,
+      headway: 30,
+      trips: 28,
+    },
+    {
+      number: '9',
+      mode: 'bus',
+      ends: ['Rosia Terminus', 'Airport'],
+      stops: [
+        { name: 'Market Place', code: '101' },
+        { name: 'Devil’s Tower Road', code: '201' },
+        { name: 'Rosia Parade', code: '104' },
+      ],
+      firstOut: 7 * 60 + 15,
+      headway: 40,
+      trips: 20,
+    },
+  ]
+
+  for (const line of corridors) {
+    for (const [way, terminal] of line.ends.entries()) {
+      // Inbound runs the corridor backwards, so a stop's position — and with
+      // it the minute a vehicle reaches it — differs between the two sheets.
+      const order = way === 0 ? line.stops : [...line.stops].reverse()
+
+      order.forEach((stop, index) => {
+        for (const dayType of ['Weekdays', 'Saturday', 'Sunday & Public Holidays']) {
+          const shift = dayType === 'Weekdays' ? 0 : dayType === 'Saturday' ? 30 : 60
+          const count = dayType === 'Weekdays' ? line.trips : Math.round(line.trips * 0.7)
+
+          const times: number[] = []
+          for (let trip = 0; trip < count; trip++) {
+            times.push(line.firstOut + shift + way * 20 + index * 3 + trip * line.headway)
+          }
+
+          lines.push(
+            csvRow([
+              line.number,
+              line.mode,
+              SIDES[way]!,
+              terminal,
+              stop.name,
+              stop.code,
+              dayType,
+              times.map((t) => formatTime(t)).join(' '),
+            ]),
+          )
+        }
+      })
+    }
+  }
+
+  return lines.join('\n') + '\n'
+}
+
+/**
+ * The same service every day of the week, stated three times.
+ *
+ * Worth having as an example because of what the sheet does with it: three
+ * identical columns say nothing a passenger can act on, so they collapse into
+ * one and the day-type headings go with them.
+ */
+const identicalDays = (): string => {
+  const times: string[] = []
+  for (let t = 7 * 60; t <= 21 * 60; t += 30) {
+    times.push(`${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`)
+  }
+  const run = times.join(' ')
+
+  return (
+    [
+      csvRow(['Route', 'Stop', 'Day type', 'Times']),
+      csvRow(['9', 'Rosia Terminus', 'Weekdays', run]),
+      csvRow(['9', 'Rosia Terminus', 'Saturday', run]),
+      csvRow(['9', 'Rosia Terminus', 'Sunday & Public Holidays', run]),
+    ].join('\n') + '\n'
+  )
+}
+
 const run = async () => {
   await mkdir(OUT, { recursive: true })
 
   const files: Array<[string, string]> = [
+    ['schedule-network-two-directions.csv', network()],
+    ['schedule-identical-days.csv', identicalDays()],
     ['schedule-long-form.csv', longForm()],
     ['schedule-trip-per-row.csv', wideForm('r8', 'weekday')],
     ['schedule-minimal.csv', minimal()],
@@ -106,7 +223,8 @@ const run = async () => {
     const { timetable: read, issues } = importTable(table, mapping)
     const errors = issues.filter((i) => i.severity === 'error')
 
-    const shape = mapping.timeColumnsFrom !== undefined ? 'trip per row' : 'one row per day'
+    const shape = mapping.timeColumnsFrom !== undefined ? "trip per row" : "one row per day"
+    const sides = read.stops.filter((s) => s.direction).length
     const departures = [...read.departures.values()].reduce((n, t) => n + t.length, 0)
     const ok = errors.length === 0 && read.stops.length > 0 && departures > 0
     if (!ok) failed++
@@ -115,6 +233,7 @@ const run = async () => {
       `${ok ? 'ok  ' : 'FAIL'}  ${name.padEnd(28)} ${shape.padEnd(16)} ` +
         `${read.routes.length} routes · ${read.stops.length} stops · ` +
         `${read.dayTypes.length} day types · ${departures} departures` +
+          (sides ? ` · ${sides} directional sides` : '') +
         (errors.length ? `  — ${errors[0]!.message}` : ''),
     )
   }

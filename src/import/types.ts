@@ -36,6 +36,8 @@ export interface ColumnMapping {
   route?: number
   stop?: number
   stopCode?: number
+  /** Splits one shelter into its two sides, each with its own sheet. */
+  direction?: number
   dayType?: number
   /** Column holding one departure, or a whole list of them. */
   times?: number
