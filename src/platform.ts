@@ -69,13 +69,48 @@ export const openFiles = async (
   )
 }
 
+const CYRILLIC: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i',
+  й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't',
+  у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'shch', ъ: '', ы: 'y',
+  ь: '', э: 'e', ю: 'yu', я: 'ya',
+}
+
+/**
+ * An ASCII rendering of a filename, for the browser fallback only.
+ *
+ * Chromium ignores a download attribute that is not ASCII and calls the file
+ * "download" instead — which, over a whole network, means every sheet arrives
+ * under the same name. The packaged app writes to a path and keeps the real
+ * name, so this never applies there.
+ */
+export const asciiFallbackName = (name: string, index: number): string => {
+  if (/^[\x20-\x7e]+$/.test(name)) return name
+
+  const stem = name.replace(/\.pdf$/i, '')
+  const ascii = [...stem.toLowerCase()]
+    .map((ch) => CYRILLIC[ch] ?? (/[a-z0-9]/.test(ch) ? ch : '-'))
+    .join('')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+
+  return `${ascii || `sheet-${index}`}.pdf`
+}
+
+let downloadCount = 0
+
 const download = (name: string, bytes: Uint8Array, mime: string) => {
   const blob = new Blob([bytes as unknown as BlobPart], { type: mime })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = name
+  a.download = asciiFallbackName(name, ++downloadCount)
+  // The download attribute is only honoured for an anchor that is in the
+  // document; detached, every file arrives named "download".
+  a.style.display = 'none'
+  document.body.appendChild(a)
   a.click()
+  a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
