@@ -1,0 +1,6 @@
+Route,Stop,Day type,Times
+8,Aurora Cinema,Weekdays,06:11 06:23 06:35 06:47 07:00 07:12 07:25 07:38 07:50
+8,Aurora Cinema,Weekends,06:04 06:20 06:38 06:55 07:14 07:32 07:50
+27,Aurora Cinema,Daily,07:10 08:40 10:56 12:26 14:16 16:04 17:34 19:50 21:20
+83,Aurora Cinema,Daily,22:40 23:20 00:05 00:50
+83,Aurora Cinema,Weekends,22:44 23:26 24:11 24:58
