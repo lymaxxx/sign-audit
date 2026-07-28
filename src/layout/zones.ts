@@ -53,8 +53,10 @@ export const contentArea = (
 ): Rect => {
   const x = margins.left
   const w = Math.max(0, artboard.width - margins.left - margins.right)
-  const y = margins.top + header.height
-  const h = Math.max(0, artboard.height - margins.top - margins.bottom - header.height - footer.height)
+  const headerSpace = header.height + (header.height > 0 ? header.contentGap : 0)
+  const footerSpace = footer.height + (footer.height > 0 ? footer.contentGap : 0)
+  const y = margins.top + headerSpace
+  const h = Math.max(0, artboard.height - margins.top - margins.bottom - headerSpace - footerSpace)
   return { x, y, w, h }
 }
 

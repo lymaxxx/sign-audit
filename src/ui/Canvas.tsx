@@ -61,7 +61,14 @@ export const Canvas = ({ page }: { page: Page | null }) => {
   const svg = useMemo(() => {
     if (!page) return ''
     const guides = showGuides
-      ? renderGuides(page, template.artboard.margins, template.zones.header.height, template.zones.footer.height)
+      ? renderGuides(
+          page,
+          template.artboard.margins,
+          template.zones.header.height,
+          template.zones.footer.height,
+          template.zones.header.contentGap,
+          template.zones.footer.contentGap,
+        )
       : undefined
     return renderSvg(page, { includeBleed: page.bleed > 0, ...(guides ? { overlay: guides } : {}) })
   }, [page, showGuides, template])

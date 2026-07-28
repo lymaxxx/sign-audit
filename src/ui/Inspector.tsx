@@ -326,6 +326,17 @@ const ZonesPanel = () => {
               onChange={(v) => edit('Band height', (tpl) => void (tpl.zones[zone].height = v))}
             />
           </Field>
+          <Field
+            label={zone === 'header' ? 'Space below' : 'Space above'}
+            hint="plain gap between the band and the schedule; the fill does not follow it in"
+          >
+            <NumberInput
+              value={t.zones[zone].contentGap}
+              min={0}
+              suffix="mm"
+              onChange={(v) => edit('Band gap', (tpl) => void (tpl.zones[zone].contentGap = v))}
+            />
+          </Field>
           <Field label="Type scale" hint="band type is sized against the sheet, not the block">
             <NumberInput
               value={Math.round(t.zones[zone].scale * 100)}
@@ -683,6 +694,57 @@ const TypePanel = () => {
         </Row>
       </Group>
 
+      <Group title="Night routes">
+        <Field label="Heading" hint="above the night-routes list at the foot of the sheet">
+          <TextInput
+            value={t.block.labels.nightRoutes}
+            onChange={(v) => edit('Label', (tpl) => void (tpl.block.labels.nightRoutes = v))}
+          />
+        </Field>
+        <Row>
+          <Field label="Space before" hint="between the day grid and this section">
+            <NumberInput
+              value={t.block.nightSection.gapBefore}
+              min={0}
+              suffix="mm"
+              onChange={(v) => edit('Night routes', (tpl) => void (tpl.block.nightSection.gapBefore = v))}
+            />
+          </Field>
+          <Field label="Space after heading" hint="between the heading and the first block">
+            <NumberInput
+              value={t.block.nightSection.gapAfterHeading}
+              min={0}
+              suffix="mm"
+              onChange={(v) => edit('Night routes', (tpl) => void (tpl.block.nightSection.gapAfterHeading = v))}
+            />
+          </Field>
+        </Row>
+        <Toggle
+          label="Divider rule"
+          value={t.block.nightSection.divider.show}
+          onChange={(v) => edit('Night routes', (tpl) => void (tpl.block.nightSection.divider.show = v))}
+        />
+        {t.block.nightSection.divider.show ? (
+          <Row>
+            <Field label="Thickness">
+              <NumberInput
+                value={t.block.nightSection.divider.thickness}
+                min={0.1}
+                step={0.1}
+                suffix="mm"
+                onChange={(v) => edit('Night routes', (tpl) => void (tpl.block.nightSection.divider.thickness = v))}
+              />
+            </Field>
+            <Field label="Colour">
+              <ColorInput
+                value={String(t.block.nightSection.divider.color)}
+                onChange={(v) => edit('Night routes', (tpl) => void (tpl.block.nightSection.divider.color = v))}
+              />
+            </Field>
+          </Row>
+        ) : null}
+      </Group>
+
       {STYLE_ROLES.map((role) => {
         const style = t.styles[role.id]
         return (
@@ -799,7 +861,7 @@ const RulesPanel = () => {
         <Field label="At least this many departures">
           <NumberInput value={t.rules.minTripsForInterval} min={2} onChange={(v) => edit('Rules', (tpl) => void (tpl.rules.minTripsForInterval = v))} />
         </Field>
-        <Field label="Longest headway to quote">
+        <Field label="Longest headway to quote" hint="beyond this, exact departure times are listed instead">
           <NumberInput value={t.rules.maxHeadwayForInterval} min={1} suffix="min" onChange={(v) => edit('Rules', (tpl) => void (tpl.rules.maxHeadwayForInterval = v))} />
         </Field>
         <Field label="Shortest stretch">

@@ -76,9 +76,11 @@ const cropMarks = (width: number, height: number, bleed: number): Primitive[] =>
 }
 
 /** A rule and a label above the night list, so it reads as its own section
- *  rather than a stray gap at the foot of the day network's grid. */
+ *  rather than a stray gap at the foot of the day network's grid. Its own
+ *  break, rule and typography, independent of how sections inside a block are
+ *  spaced and ruled off. */
 const nightHeading = (ctx: LayoutContext, box: Rect): Box => {
-  const rule = ctx.tpl.block.sectionRule
+  const { divider: rule, gapAfterHeading } = ctx.tpl.block.nightSection
   const label = ctx.tpl.block.labels.nightRoutes
   const prims: Primitive[] = []
   let top = box.y
@@ -96,13 +98,13 @@ const nightHeading = (ctx: LayoutContext, box: Rect): Box => {
     top += s(ctx, 2)
   }
 
-  if (!label.trim()) return { height: top - box.y, prims }
+  if (!label.trim()) return { height: top - box.y + s(ctx, gapAfterHeading), prims }
 
-  const style = styleOf(ctx, 'rowLabel')
+  const style = styleOf(ctx, 'nightRoutesHeading')
   const lineH = ctx.book.lineHeight(style, ctx.scale)
   const baseline = ctx.book.baselineOffset(style, ctx.scale)
-  prims.push(...text(ctx, label, 'rowLabel', box.x, top + baseline))
-  return { height: top - box.y + lineH, prims }
+  prims.push(...text(ctx, label, 'nightRoutesHeading', box.x, top + baseline))
+  return { height: top - box.y + lineH + s(ctx, gapAfterHeading), prims }
 }
 
 interface BlocksResult {
@@ -117,8 +119,18 @@ interface BlocksResult {
 }
 
 /**
- * Flow the day network's blocks into the content area, and — where the route
- * list has any — run night routes as their own list along the foot of it.
+ * Lay day and night blocks out as one ordinary grid, night routes last in
+ * order — no separate list, no heading, no divider. What a sheet falls back
+ * to when there is nowhere sensible to put a distinct night section.
+ */
+const layoutCombined = (ctx: LayoutContext, blocks: RouteBlockInput[], area: Rect): BlocksResult => {
+  const geometry = computeFlow(ctx.tpl, area.w, blocks.length)
+  return { ...fitContent(ctx, blocks, area, geometry), blockScale: geometry.blockScale }
+}
+
+/**
+ * Run night routes as their own list along the foot of the content area,
+ * below the day grid.
  *
  * A night line has nothing in common with the daytime service it would
  * otherwise be interleaved with in one grid, so it is laid out as a separate
@@ -126,21 +138,12 @@ interface BlocksResult {
  * night list shrink together rather than one holding a size the other cannot
  * afford.
  */
-const layoutBlocks = (ctx: LayoutContext, blocks: RouteBlockInput[], area: Rect): BlocksResult => {
-  const dayBlocks = blocks.filter((b) => !b.route.isNightRoute)
-  const nightBlocks = blocks.filter((b) => b.route.isNightRoute)
-
-  if (nightBlocks.length === 0) {
-    const geometry = computeFlow(ctx.tpl, area.w, dayBlocks.length)
-    return { ...fitContent(ctx, dayBlocks, area, geometry), blockScale: geometry.blockScale }
-  }
-  if (dayBlocks.length === 0) {
-    // Nothing to split from: the night list is the whole sheet, sized the way
-    // a day-only sheet would be.
-    const geometry = computeFlow(ctx.tpl, area.w, nightBlocks.length)
-    return { ...fitContent(ctx, nightBlocks, area, geometry), blockScale: geometry.blockScale }
-  }
-
+const layoutSplit = (
+  ctx: LayoutContext,
+  dayBlocks: RouteBlockInput[],
+  nightBlocks: RouteBlockInput[],
+  area: Rect,
+): BlocksResult => {
   const dayGeometry = computeFlow(ctx.tpl, area.w, dayBlocks.length)
   // The night list reads as more of the same sheet, not a second one with its
   // own type size — it takes the day grid's column width and just uses as
@@ -157,8 +160,7 @@ const layoutBlocks = (ctx: LayoutContext, blocks: RouteBlockInput[], area: Rect)
     offsetX: align === 'center' ? nightSlack / 2 : align === 'right' ? nightSlack : 0,
   }
   const blockScale = dayGeometry.blockScale
-  // A section break reads as more than the next row down.
-  const breakGap = ctx.tpl.flow.rowGap * 2
+  const breakGap = ctx.tpl.block.nightSection.gapBefore
 
   const at = (fitScale: number): BlocksResult & { total: number } => {
     const day = layoutContent({ ...ctx, scale: dayGeometry.blockScale * fitScale }, dayBlocks, area, dayGeometry)
@@ -200,6 +202,39 @@ const layoutBlocks = (ctx: LayoutContext, blocks: RouteBlockInput[], area: Rect)
     }
   }
   return best
+}
+
+/**
+ * Flow the day network's blocks into the content area, and — where the route
+ * list has any — try to run night routes as their own list along the foot of
+ * it, falling back to folding them into the day grid instead (still last in
+ * order) where the split list does not fit and the panel had columns to
+ * spare beside a day network too small to use them all. A wide panel with one
+ * big day route should not force its night routes underneath when there is
+ * a whole empty column beside it.
+ */
+const layoutBlocks = (ctx: LayoutContext, blocks: RouteBlockInput[], area: Rect): BlocksResult => {
+  const dayBlocks = blocks.filter((b) => !b.route.isNightRoute)
+  const nightBlocks = blocks.filter((b) => b.route.isNightRoute)
+
+  if (nightBlocks.length === 0) return layoutCombined(ctx, dayBlocks, area)
+  if (dayBlocks.length === 0) return layoutCombined(ctx, nightBlocks, area)
+
+  const split = layoutSplit(ctx, dayBlocks, nightBlocks, area)
+  if (!split.overflow) return split
+
+  const { columns: configured, blockWidth: nominal, columnGap } = ctx.tpl.flow
+  const naturalColumns =
+    configured === 'auto'
+      ? Math.max(1, Math.floor((area.w + columnGap) / (Math.max(1, nominal) + columnGap)))
+      : Math.max(1, Math.round(configured))
+
+  if (naturalColumns > dayBlocks.length) {
+    const combined = layoutCombined(ctx, [...dayBlocks, ...nightBlocks], area)
+    if (!combined.overflow) return combined
+  }
+
+  return split
 }
 
 /**

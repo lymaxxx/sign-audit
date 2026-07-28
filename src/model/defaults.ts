@@ -64,6 +64,7 @@ export const defaultStyles = (): StyleSheet => ({
 
   note: style({ sizePt: 6.8, weight: 400, color: 'muted', lineHeight: 1.3 }),
   footerText: style({ sizePt: 6.8, weight: 400, color: 'muted', lineHeight: 1.3 }),
+  nightRoutesHeading: style({ sizePt: 8, weight: 700, color: 'muted', transform: 'uppercase', tracking: 0.04 }),
 })
 
 export const defaultRules = (): SegmentRules => ({
@@ -126,6 +127,11 @@ export const defaultBlock = (): BlockConfig => ({
   intervalSeparator: '–',
   intervalAverageThreshold: 5,
   intervalAveragePrefix: '~',
+  nightSection: {
+    gapBefore: 10,
+    gapAfterHeading: 3,
+    divider: { show: true, thickness: 0.35, color: 'rule' },
+  },
 })
 
 export const defaultTitle = (): TitleConfig => ({
@@ -145,6 +151,7 @@ export const defaultTitleFrame = (): FrameStyle => ({
 const emptyZone = (height: number): ZoneConfig => ({
   height,
   background: 'none',
+  contentGap: 0,
   divider: { show: true, thickness: 0.35, color: 'rule' },
   padding: insets(0),
   scale: 1,

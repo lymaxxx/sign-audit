@@ -184,9 +184,35 @@ describe('real timetables are not tidy', () => {
     expect(interval).toBeDefined()
     if (interval?.kind === 'interval') expect(interval.min).toBe(60)
   })
+
+  it('reads a run too short to spare edges as one whole interval, not a list', () => {
+    // Six trips on the dot of an hour: exactly `minTripsForInterval`, with
+    // nothing to spare for a separate first or last row. It is still every
+    // hour, on six trips — better said that way than as six bare times.
+    const times = [at(21, 10), at(22, 10), at(23, 10), at(24, 10), at(25, 10), at(26, 0)]
+    const sections = segmentDay(times, rules())
+    expect(sections).toHaveLength(1)
+    expect(sections[0]!.kind).toBe('interval')
+    expect(sections[0]!.times).toHaveLength(6)
+  })
+
+  it('does not reject a clean but modest run just because it cannot also spare a first and last row', () => {
+    // Seven trips every ~44 minutes: a clear rhythm, but short of the ten
+    // trips the old gate demanded before it would call it a headway at all.
+    // One trip is spare enough to peel as a first departure; the other six
+    // stay together as the headway, with no last row to spare.
+    const times = [at(6, 3), at(8, 15), at(8, 59), at(9, 43), at(10, 27), at(11, 11), at(11, 55)]
+    const sections = segmentDay(times, rules())
+    expect(sections.some((s) => s.kind === 'hourly')).toBe(false)
+    const interval = sections.find((s) => s.kind === 'interval')
+    expect(interval).toBeDefined()
+    expect(interval!.times.length).toBeGreaterThanOrEqual(5)
+  })
 })
 
 describe('segmenting several kinds of day together', () => {
+  const at = (h: number, m: number) => h * 60 + m
+
   // A weekday alternating 15/30 (a couple of 15-minute slots dropped through
   // the day) beside a sparser, less regular weekend — the shape that showed
   // up as a raw hourly grid next to the weekend's own correctly-read headway,
@@ -216,5 +242,25 @@ describe('segmenting several kinds of day together', () => {
     const intervalRow = wd!.findIndex((s) => s?.kind === 'interval')
     expect(intervalRow).toBeGreaterThanOrEqual(0)
     expect(we![intervalRow]?.kind).toBe('interval')
+  })
+
+  it('never loses a departure across columns once the shared shape is settled', () => {
+    // A fuzzed pair that used to turn up a modest-but-clean column rejected
+    // outright as a headway before the qualification gate stopped demanding
+    // room for both edge peels as the price of admission.
+    const day0 = [at(5, 19), at(6, 3), at(8, 15), at(8, 59), at(9, 43), at(10, 27), at(11, 11), at(11, 55)]
+    const day1 = [
+      at(6, 49), at(7, 33), at(8, 17), at(9, 1), at(10, 29), at(11, 13), at(11, 57), at(12, 41),
+      at(14, 53), at(15, 37), at(16, 21),
+    ]
+    const [c0, c1] = segmentDayTypes([day0, day1], rules())
+    expect(c0!.some((s) => s?.kind === 'hourly' || s?.kind === 'times')).toBe(true) // still allowed for the leftover single trip
+    expect(c0!.some((s) => s?.kind === 'interval')).toBe(true)
+    expect(c1!.some((s) => s?.kind === 'interval')).toBe(true)
+
+    const seen0 = c0!.flatMap((s) => s?.times ?? []).sort((a, b) => a - b)
+    const seen1 = c1!.flatMap((s) => s?.times ?? []).sort((a, b) => a - b)
+    expect(seen0).toEqual([...day0].sort((a, b) => a - b))
+    expect(seen1).toEqual([...day1].sort((a, b) => a - b))
   })
 })

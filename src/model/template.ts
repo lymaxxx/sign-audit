@@ -57,6 +57,7 @@ export type StyleRole =
   | 'intervalUnit'
   | 'note'
   | 'footerText'
+  | 'nightRoutesHeading'
 
 export type StyleSheet = Record<StyleRole, TextStyle>
 
@@ -178,6 +179,10 @@ export interface ZoneConfig {
    *  taller footer pushes the schedule up rather than being drawn over it. */
   height: number
   background: ColorToken | string | 'none'
+  /** Extra plain space between this zone and the content area, in mm — room
+   *  to breathe beyond the zone's own box, which the background fill does not
+   *  follow into. */
+  contentGap: number
   /** Hairline separating the zone from the content area. */
   divider: { show: boolean; thickness: number; color: ColorToken | string }
   padding: Insets
@@ -291,6 +296,16 @@ export interface BlockConfig {
   intervalAverageThreshold: number
   /** Printed in front of an averaged figure. */
   intervalAveragePrefix: string
+  /** The night-routes list at the foot of the sheet: its own break from the
+   *  day grid above it, independent of the rules that space and rule off
+   *  sections inside a block. */
+  nightSection: {
+    /** Space between the day grid and the divider/heading, in mm. */
+    gapBefore: number
+    /** Space between the heading and the first night-route block, in mm. */
+    gapAfterHeading: number
+    divider: { show: boolean; thickness: number; color: ColorToken | string }
+  }
 }
 
 /**

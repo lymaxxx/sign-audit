@@ -95,6 +95,26 @@ describe('sheet layout', () => {
     expect(area.y + area.h).toBeLessThanOrEqual(tpl.artboard.height - tpl.artboard.margins.bottom - 200 + 0.01)
   })
 
+  it('pushes the content area down by the header/footer content gap', () => {
+    const tpl = createDefaultTemplate()
+    const before = contentArea(tpl.artboard, tpl.artboard.margins, tpl.zones.header, tpl.zones.footer)
+
+    tpl.zones.header.contentGap = 8
+    tpl.zones.footer.contentGap = 5
+    const after = contentArea(tpl.artboard, tpl.artboard.margins, tpl.zones.header, tpl.zones.footer)
+
+    expect(after.y).toBeCloseTo(before.y + 8, 5)
+    expect(after.h).toBeCloseTo(before.h - 13, 5)
+  })
+
+  it('does not add a content gap for a band that is not shown', () => {
+    const tpl = createDefaultTemplate()
+    tpl.zones.header.height = 0
+    tpl.zones.header.contentGap = 20
+    const before = contentArea(tpl.artboard, tpl.artboard.margins, tpl.zones.header, tpl.zones.footer)
+    expect(before.y).toBeCloseTo(tpl.artboard.margins.top, 5)
+  })
+
   it('shrinks rather than overflow, and says by how much', () => {
     const page = sheet((t) => {
       artboard(210, 200)(t)
@@ -162,10 +182,15 @@ describe('night routes', () => {
 
   it('prints the heading above the night list', () => {
     const page = nightSheet()
-    const texts = page.primitives
+    // Tracked text (the heading's default style) is emitted one glyph per
+    // primitive, so join everything in emission order rather than looking
+    // for the whole label as a single run.
+    const joined = page.primitives
       .filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
       .map((p) => p.text)
-    expect(texts).toContain(createDefaultTemplate().block.labels.nightRoutes)
+      .join('')
+      .toLowerCase()
+    expect(joined).toContain(createDefaultTemplate().block.labels.nightRoutes.toLowerCase())
   })
 
   it('does not stretch a lone night route to fill the row on its own', () => {
@@ -175,5 +200,51 @@ describe('night routes', () => {
     const page = nightSheet()
     const withoutSplit = sheet()
     expect(page.diagnostics.scale).toBeLessThanOrEqual(withoutSplit.diagnostics.scale * 1.2)
+  })
+
+  it('folds night routes into the day grid on a wide panel with room to spare', () => {
+    // One big day route on a wide panel leaves whole columns unused; night
+    // routes read fine sharing them rather than forced underneath, where they
+    // used to overflow a panel that plainly had space for them.
+    const own = makeDemoTimetable()
+    for (const route of own.routes.slice(1)) route.isNightRoute = true
+
+    const tpl = createDefaultTemplate()
+    tpl.artboard.width = 420
+    tpl.artboard.height = 297
+    const stop = own.stops[0]!
+    const blocks = buildSheetBlocks(own, stop.id, tpl)
+    const page = layoutSheet(book, tpl, { stop, blocks, date: '1 Jan 2026' })
+
+    expect(page.diagnostics.overflow).toBe(false)
+    expect(page.diagnostics.columns).toBeGreaterThan(1)
+    const joined = page.primitives
+      .filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
+      .map((p) => p.text)
+      .join('')
+      .toLowerCase()
+    expect(joined).not.toContain(tpl.block.labels.nightRoutes.toLowerCase())
+  })
+
+  it('keeps the split list — even overflowing — when there is no side room to fold into', () => {
+    // A narrow panel where the day network alone already fills the only
+    // column there is: folding would not help, so the separate list stays.
+    const own = makeDemoTimetable()
+    own.routes[own.routes.length - 1]!.isNightRoute = true
+
+    const tpl = createDefaultTemplate()
+    tpl.artboard.width = 100
+    tpl.artboard.height = 200
+    const stop = own.stops[0]!
+    const blocks = buildSheetBlocks(own, stop.id, tpl)
+    const page = layoutSheet(book, tpl, { stop, blocks, date: '1 Jan 2026' })
+
+    expect(page.diagnostics.columns).toBe(1)
+    const joined = page.primitives
+      .filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
+      .map((p) => p.text)
+      .join('')
+      .toLowerCase()
+    expect(joined).toContain(tpl.block.labels.nightRoutes.toLowerCase())
   })
 })

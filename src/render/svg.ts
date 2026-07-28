@@ -95,6 +95,8 @@ export const renderGuides = (
   margins: { top: number; right: number; bottom: number; left: number },
   headerHeight: number,
   footerHeight: number,
+  headerGap = 0,
+  footerGap = 0,
 ): string => {
   const guide = (x: number, y: number, w: number, h: number, color: string, dash: string) =>
     `<rect x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" fill="none" ` +
@@ -102,8 +104,10 @@ export const renderGuides = (
 
   const innerW = page.width - margins.left - margins.right
   const innerH = page.height - margins.top - margins.bottom
-  const contentY = margins.top + headerHeight
-  const contentH = innerH - headerHeight - footerHeight
+  const headerSpace = headerHeight + (headerHeight > 0 ? headerGap : 0)
+  const footerSpace = footerHeight + (footerHeight > 0 ? footerGap : 0)
+  const contentY = margins.top + headerSpace
+  const contentH = innerH - headerSpace - footerSpace
 
   return (
     `<g pointer-events="none">` +

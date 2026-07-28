@@ -168,12 +168,16 @@ export const readHeadways = (gaps: number[], rules: SegmentRules): HeadwayReadin
 /**
  * How many departures a stretch needs before quoting a headway beats listing it.
  *
- * The rhythm has to survive having its first and last departures shown beside
- * it. Six night trips minus two at each end leaves a single gap, and "every
- * 50-60 minutes" over one gap is a worse answer than the six times themselves.
+ * This gates whether a stretch is a headway at all, which is a lower bar than
+ * showing separate first/last rows beside it — peeling those off is a later,
+ * independent step (`peelEdges`/`splitOff`) that already declines to touch a
+ * run too short to spare the trips, via the same `minTripsForInterval` floor.
+ * Gating admission on having enough to spare for *both* edges as well used to
+ * reject a perfectly regular run just because it was modest in length; a
+ * seven-trip run every 44 minutes is still worth calling that, even without
+ * room to also show its first and last departures separately.
  */
-export const tripsNeededForInterval = (rules: SegmentRules): number =>
-  rules.minTripsForInterval + Math.max(1, rules.firstTripsCount) + Math.max(1, rules.lastTripsCount)
+export const tripsNeededForInterval = (rules: SegmentRules): number => rules.minTripsForInterval
 
 /** Does this run read as regular service rather than a handful of departures? */
 const qualifiesAsInterval = (run: Run, times: Minutes[], rules: SegmentRules): boolean => {
