@@ -1,7 +1,7 @@
 // Turns laid-out node positions into everything the SVG renderer draws:
 // parallel-offset line paths, stop markers, direction arrows, labels, badges.
 
-import { edgeDirectionality } from './graph.js'
+import { edgeDirectionality, routesWithBothDirections } from './graph.js'
 import {
   arrowAnchors,
   offsetPolyline,
@@ -17,6 +17,7 @@ export function buildSchematic(project, graph, positions, settings) {
   const s = settings
   const gap = s.lineGap
   const routeOrder = new Map(project.routes.map((r, i) => [r.id, i]))
+  const bidirectional = routesWithBothDirections(project)
   const routeById = new Map(project.routes.map((r) => [r.id, r]))
 
   // Fixed slot per route on every shared corridor, so parallel lines keep the
@@ -111,7 +112,7 @@ export function buildSchematic(project, graph, positions, settings) {
         for (let i = 0; i < collapsed.length - 1; i++) {
           const edge = segEdges[i]
           if (!edge) continue
-          const dirMode = edgeDirectionality(edge, route.id)
+          const dirMode = edgeDirectionality(edge, route.id, bidirectional.has(route.id))
           if (dirMode === 'both' || !dirMode) continue
           for (const anchor of arrowAnchors(points[i], points[i + 1], s.arrows.spacing)) {
             arrows.push({ ...anchor, color: route.color, key: `${route.id}-${dirKey}-${i}-${anchor.x.toFixed(1)}` })

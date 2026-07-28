@@ -1,6 +1,13 @@
 import { Field, Section, Toggle } from './controls.jsx'
-import { makeRoute, PALETTE, stopById } from '../state/project.js'
-import { formatDistance, polylineLength } from '../lib/geo.js'
+import {
+  dirEntries,
+  entryPlatformSuffix,
+  makeRoute,
+  PALETTE,
+  platformLabelFor,
+  stopById,
+} from '../state/project.js'
+import { formatDistance, haversine, polylineLength } from '../lib/geo.js'
 
 export default function RoutesPanel({
   project,
@@ -195,8 +202,9 @@ function RouteEditor({ project, dispatch, route, editing, setEditing, setFocus, 
       {activeDirKey ? (
         <p className="notice ok small">
           Click stops on the map to append them to the <b>{activeDirKey === 'fwd' ? 'outbound' : 'return'}</b>{' '}
-          direction. Drag a drawn line onto another road to reroute that section; right-click the
-          line to reset it.
+          direction. To fix a section that took the wrong road, click the drawn line to drop a
+          waypoint there (or drag the line to where it should go); waypoints can be dragged, and
+          right-clicked to remove. Right-click the line itself to clear its waypoints.
         </p>
       ) : (
         <p className="muted small">Pick a direction above to start adding stops.</p>
@@ -255,6 +263,15 @@ function RouteEditor({ project, dispatch, route, editing, setEditing, setFocus, 
   )
 }
 
+// A routed section several times longer than the direct distance usually means
+// the router looped around a block to reach the far kerb — worth flagging.
+function isDetour(leg) {
+  if (leg.status !== 'road' || !leg.coords || leg.coords.length < 2) return false
+  const direct = haversine(leg.coords[0], leg.coords[leg.coords.length - 1])
+  const travelled = polylineLength(leg.coords)
+  return travelled > Math.max(350, direct * 3.5)
+}
+
 function StopSequence({ project, dispatch, route, dirKey, dir, setFocus, insertAt, setInsertAt }) {
   const total = dir.legs.reduce(
     (sum, leg) => sum + (leg.coords ? polylineLength(leg.coords) : 0),
@@ -275,9 +292,12 @@ function StopSequence({ project, dispatch, route, dirKey, dir, setFocus, insertA
       </div>
       {!dir.stopIds.length && <p className="muted small">No stops yet.</p>}
       <ol className="sequence-list">
-        {dir.stopIds.map((stopId, i) => {
+        {dirEntries(dir).map((entry, i) => {
+          const stopId = entry.stopId
           const stop = stopById(project, stopId)
           const leg = dir.legs[i]
+          const platforms = stop?.platforms || []
+          const suffix = entryPlatformSuffix(project, entry)
           return (
             <li key={`${stopId}-${i}`}>
               <div className="row">
@@ -289,6 +309,7 @@ function StopSequence({ project, dispatch, route, dirKey, dir, setFocus, insertA
                   }
                 >
                   {stop ? stop.name : '(deleted stop)'}
+                  {suffix && <em className="platform-tag">{suffix}</em>}
                 </span>
                 <button
                   className={
@@ -337,15 +358,42 @@ function StopSequence({ project, dispatch, route, dirKey, dir, setFocus, insertA
                   ✕
                 </button>
               </div>
+              {platforms.length > 1 && (
+                <div className="platform-pick">
+                  <span>platform</span>
+                  <select
+                    value={entry.platformId || ''}
+                    onChange={(e) =>
+                      dispatch({
+                        type: 'setEntryPlatform',
+                        routeId: route.id,
+                        dirKey,
+                        index: i,
+                        platformId: e.target.value || null,
+                      })
+                    }
+                  >
+                    <option value="">nearest / centre</option>
+                    {platforms.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {platformLabelFor(stop, p).split(' · ').pop()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {leg && (
-                <div className={`leg ${leg.status}`}>
+                <div className={`leg ${leg.status}${isDetour(leg) ? ' detour' : ''}`}>
                   <span>
-                    {leg.status === 'road' && `↳ along roads · ${formatDistance(polylineLength(leg.coords))}`}
+                    {leg.status === 'road' &&
+                      `↳ along roads · ${formatDistance(polylineLength(leg.coords))}${
+                        isDetour(leg) ? ' — long way round, add a waypoint to correct it' : ''
+                      }`}
                     {leg.status === 'straight' && '↳ straight line'}
                     {leg.status === 'pending' && '↳ routing…'}
                     {leg.status === 'error' && `↳ routing failed: ${leg.error || 'unknown'}`}
                   </span>
-                  {leg.vias.length > 0 && <em>{leg.vias.length} detour point(s)</em>}
+                  {leg.vias.length > 0 && <em>{leg.vias.length} waypoint(s)</em>}
                   <button
                     className="icon"
                     title="Recalculate this section from scratch"

@@ -98,11 +98,32 @@ export function edgeRouteOrder(edge, routeOrder) {
 
 // True when a route traverses this edge in one direction only — those sections
 // get direction arrows in the schematic.
-export function edgeDirectionality(edge, routeId) {
+//
+// A route that has only been drawn one way is not "one-way": it simply has no
+// return leg yet, and the line is understood to work both ways. Only routes
+// with both directions defined can have genuinely one-directional sections,
+// and only where the two stop sequences actually differ. Taking a different
+// road between the same pair of stops does not count — the schematic cares
+// about the stops, not the tarmac.
+export function edgeDirectionality(edge, routeId, hasBothDirections) {
   const uses = edge.uses.filter((u) => u.routeId === routeId)
   if (!uses.length) return null
+  if (!hasBothDirections) return 'both'
+  const usedBy = new Set(uses.map((u) => u.dirKey))
+  if (usedBy.size > 1) return 'both'
   const forward = uses.some((u) => u.forward)
   const backward = uses.some((u) => !u.forward)
   if (forward && backward) return 'both'
   return forward ? 'forward' : 'backward'
+}
+
+// Routes that have a return direction with enough stops to be meaningful.
+export function routesWithBothDirections(project) {
+  const set = new Set()
+  for (const route of project.routes) {
+    const fwd = route.dirs.fwd
+    const bwd = route.dirs.bwd
+    if (fwd?.stopIds.length >= 2 && bwd?.stopIds.length >= 2) set.add(route.id)
+  }
+  return set
 }

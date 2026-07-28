@@ -1,7 +1,7 @@
 // A small fictional network so the app can be tried out (and tested) without
 // hitting OpenStreetMap. Coordinates sit on a tidy grid near Berlin.
 
-import { defaultSchematic, PALETTE } from '../state/project.js'
+import { defaultSchematic, makePlatform, PALETTE, stopFromPlatforms } from '../state/project.js'
 
 const STOPS = [
   ['Nordpark', 52.545, 13.372],
@@ -62,15 +62,34 @@ const ROUTES = [
 ]
 
 export function demoProject() {
-  const stops = STOPS.map(([name, lat, lon], i) => ({
-    id: `demo_s${i}`,
-    name,
-    lat,
-    lon,
-    kind: 'bus',
-    refs: [],
-  }))
+  const stops = STOPS.map(([name, lat, lon], i) =>
+    stopFromPlatforms(
+      [makePlatform({ id: `demo_p${i}`, name, lat, lon, kind: 'bus' })],
+      `demo_s${i}`,
+    ),
+  )
+  // Hauptbahnhof gets two platforms (one per side of the street) so the
+  // platform handling is visible in the demo: the two directions call at
+  // different kerbs but the schematic still shows a single station.
+  const hbf = stops.find((s) => s.name === 'Hauptbahnhof')
+  hbf.platforms.push(
+    makePlatform({
+      id: 'demo_p10b',
+      name: 'Hauptbahnhof (south)',
+      lat: hbf.lat - 0.0004,
+      lon: hbf.lon + 0.0004,
+      kind: 'bus',
+    }),
+  )
+
   const byName = new Map(stops.map((s) => [s.name, s]))
+  // which platform each direction calls at: outbound uses the first, the
+  // return uses the last (a no-op for single-platform stops)
+  const platformFor = (name, dirKey) => {
+    const stop = byName.get(name)
+    const list = stop.platforms
+    return dirKey === 'bwd' ? list[list.length - 1].id : list[0].id
+  }
 
   const legsFor = (names) =>
     names.slice(1).map((_, i) => ({
@@ -91,11 +110,20 @@ export function demoProject() {
     snap: false,
     visible: true,
     dirs: {
-      fwd: { stopIds: r.fwd.map((n) => byName.get(n).id), legs: legsFor(r.fwd) },
+      fwd: {
+        stopIds: r.fwd.map((n) => byName.get(n).id),
+        platformIds: r.fwd.map((n) => platformFor(n, 'fwd')),
+        legs: legsFor(r.fwd),
+      },
       bwd: r.bwd
-        ? { stopIds: r.bwd.map((n) => byName.get(n).id), legs: legsFor(r.bwd) }
+        ? {
+            stopIds: r.bwd.map((n) => byName.get(n).id),
+            platformIds: r.bwd.map((n) => platformFor(n, 'bwd')),
+            legs: legsFor(r.bwd),
+          }
         : {
             stopIds: r.fwd.slice().reverse().map((n) => byName.get(n).id),
+            platformIds: r.fwd.slice().reverse().map((n) => platformFor(n, 'bwd')),
             legs: legsFor(r.fwd.slice().reverse()),
           },
     },

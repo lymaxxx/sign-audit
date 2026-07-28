@@ -691,3 +691,42 @@ input[type='checkbox'] {
 .empty-note h3 {
   margin: 0 0 6px;
 }
+
+.platform-tag {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 6px;
+}
+
+.platform-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 0 2px 26px;
+}
+
+.platform-pick select {
+  width: auto;
+  flex: 1;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
+.platform-count {
+  font-size: 10px;
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--muted);
+  flex: none;
+}
+
+.leg.detour {
+  color: var(--warn);
+}

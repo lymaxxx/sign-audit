@@ -2,7 +2,14 @@ import { useEffect, useMemo, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { closestSegmentIndex } from '../lib/geo.js'
-import { routesAtStop } from '../state/project.js'
+import {
+  dirEntries,
+  entryPoint,
+  makePlatform,
+  platformLabelFor,
+  routesAtStop,
+  stopFromPlatforms,
+} from '../state/project.js'
 
 export const BASEMAPS = {
   osm: {
@@ -60,6 +67,11 @@ export default function MapCanvas({
       preferCanvas: false,
     })
     mapRef.current = map
+    // Explicit stacking: stop dots must win clicks over route lines, and the
+    // section being edited must sit above every other route.
+    map.createPane('routesPane').style.zIndex = 400
+    map.createPane('activeRoutePane').style.zIndex = 430
+    map.createPane('stopsPane').style.zIndex = 460
     layersRef.current = {
       routes: L.layerGroup().addTo(map),
       stops: L.layerGroup().addTo(map),
@@ -83,15 +95,11 @@ export default function MapCanvas({
     map.on('click', (e) => {
       const { tool: t, dispatch: d } = stateRef.current
       if (t === 'addStop') {
-        const stop = {
-          id: `s_manual_${Date.now().toString(36)}`,
-          name: 'New stop',
-          lat: e.latlng.lat,
-          lon: e.latlng.lng,
-          kind: 'bus',
-          refs: [],
-          manual: true,
-        }
+        const stop = stopFromPlatforms([
+          makePlatform({ name: 'New stop', lat: e.latlng.lat, lon: e.latlng.lng, kind: 'bus' }),
+        ])
+        stop.name = 'New stop'
+        stop.manual = true
         d({ type: 'addStop', stop })
         stateRef.current.onSelectStop?.(stop.id)
       }
@@ -221,41 +229,47 @@ export default function MapCanvas({
         const dim = editing && !isActive
         for (let i = 0; i < dir.legs.length; i++) {
           const leg = dir.legs[i]
-          const a = project.stops.find((s) => s.id === dir.stopIds[i])
-          const b = project.stops.find((s) => s.id === dir.stopIds[i + 1])
+          const entries = dirEntries(dir)
+          const a = entryPoint(project, entries[i] || {})
+          const b = entryPoint(project, entries[i + 1] || {})
           if (!a || !b) continue
-          const coords = leg.coords || [
-            [a.lat, a.lon],
-            [b.lat, b.lon],
-          ]
+          const coords = leg.coords || [a, b]
           const line = L.polyline(coords, {
+            pane: isActive ? 'activeRoutePane' : 'routesPane',
             color: route.color,
             weight: isActive ? 7 : 4.5,
             opacity: dim ? 0.35 : 0.9,
             dashArray: leg.status === 'road' ? null : '8 6',
-            interactive: true,
+            interactive: !isActive,
             bubblingMouseEvents: false,
-            // a fat invisible line makes the drag target easier to hit
           }).addTo(layer)
           if (dirKey === 'bwd') {
             line.setStyle({ dashArray: leg.status === 'road' ? '12 8' : '8 6' })
           }
-          line.bindTooltip(
-            `${route.number} ${route.name} · ${dirKey === 'fwd' ? 'outbound' : 'return'}${
-              leg.status === 'road' ? '' : ` · ${leg.status}`
-            }`,
-            { sticky: true },
-          )
+          const tooltip = `${route.number} ${route.name} · ${
+            dirKey === 'fwd' ? 'outbound' : 'return'
+          }${leg.status === 'road' ? '' : ` · ${leg.status}`}`
+          if (!isActive) line.bindTooltip(tooltip, { sticky: true })
 
           if (isActive) {
-            attachLegDragging(map, line, layersRef.current.drag, stateRef, {
+            // A fat transparent line on top makes the section easy to grab.
+            const hit = L.polyline(coords, {
+              pane: 'activeRoutePane',
+              color: route.color,
+              weight: 20,
+              opacity: 0,
+              interactive: true,
+              bubblingMouseEvents: false,
+            }).addTo(layer)
+            hit.bindTooltip(`${tooltip} — click to add a waypoint`, { sticky: true })
+            attachLegEditing(map, hit, line, layersRef.current.drag, stateRef, {
               routeId: route.id,
               dirKey,
               index: i,
               leg,
               coords,
             })
-            line.on('contextmenu', (e) => {
+            hit.on('contextmenu', (e) => {
               L.DomEvent.stop(e)
               stateRef.current.dispatch({
                 type: 'resetLeg',
@@ -280,9 +294,14 @@ export default function MapCanvas({
       leg.vias.forEach((via, viaIndex) => {
         const marker = L.marker(via, {
           draggable: true,
-          icon: L.divIcon({ className: 'via-handle', iconSize: [12, 12] }),
-          title: 'Drag to move this detour point · right-click to remove',
+          icon: L.divIcon({ className: 'via-handle', iconSize: [14, 14] }),
+          title: 'Waypoint — drag to move, right-click to remove',
+          zIndexOffset: 800,
         }).addTo(layer)
+        marker.bindTooltip('Waypoint — drag to move, right-click to remove', {
+          direction: 'top',
+          offset: [0, -8],
+        })
         marker.on('dragend', () => {
           const p = marker.getLatLng()
           stateRef.current.dispatch({
@@ -322,52 +341,105 @@ export default function MapCanvas({
     const layer = layersRef.current.stops
     if (!layer) return
     layer.clearLayers()
-    const sequence = new Map()
+
+    // Which platform (or, when unspecified, which stop) carries each sequence
+    // number of the direction being edited.
+    const byPlatform = new Map()
+    const byStop = new Map()
     if (activeDir) {
-      activeDir.stopIds.forEach((id, i) => {
-        const list = sequence.get(id) || []
+      dirEntries(activeDir).forEach((entry, i) => {
+        const key = entry.platformId || entry.stopId
+        const target = entry.platformId ? byPlatform : byStop
+        const list = target.get(key) || []
         list.push(i + 1)
-        sequence.set(id, list)
+        target.set(key, list)
       })
     }
 
     for (const stop of project.stops) {
-      const inRoute = sequence.get(stop.id)
       const served = stopMeta.get(stop.id) || 0
       const selected = stop.id === selectedStopId
-      let marker
-      if (inRoute) {
-        marker = L.marker([stop.lat, stop.lon], {
-          icon: L.divIcon({
-            className: 'stop-seq',
-            html: `<span>${inRoute.join(',')}</span>`,
-            iconSize: [22, 22],
-          }),
-          zIndexOffset: 500,
-        })
-      } else {
-        marker = L.circleMarker([stop.lat, stop.lon], {
-          radius: selected ? 8 : served ? 6 : 4.5,
-          color: selected ? '#2b6cff' : served ? '#111' : '#555',
-          weight: selected ? 3 : 1.5,
-          fillColor: served ? '#ffd84d' : '#fff',
-          fillOpacity: 1,
-        })
+      const platforms = stop.platforms?.length ? stop.platforms : [{ id: null, ...stop }]
+
+      // A hairline ring around the whole stop makes it obvious that several
+      // platforms belong together.
+      if (platforms.length > 1) {
+        L.circleMarker([stop.lat, stop.lon], {
+          pane: 'stopsPane',
+          radius: 3,
+          color: selected ? '#2b6cff' : '#8892a6',
+          weight: 1,
+          opacity: 0.9,
+          fillOpacity: 0.9,
+          interactive: false,
+        }).addTo(layer)
+        for (const platform of platforms) {
+          L.polyline(
+            [
+              [stop.lat, stop.lon],
+              [platform.lat, platform.lon],
+            ],
+            {
+              pane: 'stopsPane',
+              color: '#8892a6',
+              weight: 1,
+              opacity: 0.55,
+              interactive: false,
+              dashArray: '2 3',
+            },
+          ).addTo(layer)
+        }
       }
-      marker.addTo(layer)
-      marker.bindTooltip(stop.name, { direction: 'top', offset: [0, -6] })
-      marker.on('click', (e) => {
-        L.DomEvent.stop(e)
-        const { editing: ed, dispatch: d, onSelectStop: sel, insertAt: ins } = stateRef.current
-        sel?.(stop.id)
-        if (ins) {
-          d({ type: 'insertStop', ...ins, stopId: stop.id })
-          stateRef.current.onInserted?.()
-          return
+
+      platforms.forEach((platform, pIndex) => {
+        const numbers = [
+          ...(byPlatform.get(platform.id) || []),
+          // an entry with no platform recorded belongs to the first platform
+          ...(pIndex === 0 ? byStop.get(stop.id) || [] : []),
+        ].sort((a, b) => a - b)
+
+        let marker
+        if (numbers.length) {
+          marker = L.marker([platform.lat, platform.lon], {
+            icon: L.divIcon({
+              className: 'stop-seq',
+              html: `<span>${numbers.join(',')}</span>`,
+              iconSize: [22, 22],
+            }),
+            zIndexOffset: 500,
+          })
+        } else {
+          marker = L.circleMarker([platform.lat, platform.lon], {
+            pane: 'stopsPane',
+            radius: selected ? 7 : served ? 5.5 : 4.5,
+            color: selected ? '#2b6cff' : served ? '#111' : '#555',
+            weight: selected ? 3 : 1.5,
+            fillColor: served ? '#ffd84d' : '#fff',
+            fillOpacity: 1,
+          })
         }
-        if (ed) {
-          d({ type: 'appendStop', routeId: ed.routeId, dirKey: ed.dirKey, stopId: stop.id })
-        }
+        marker.addTo(layer)
+        const label = platformLabelFor(stop, platform)
+        marker.bindTooltip(label, { direction: 'top', offset: [0, -6] })
+        marker.on('click', (e) => {
+          L.DomEvent.stop(e)
+          const { editing: ed, dispatch: d, onSelectStop: sel, insertAt: ins } = stateRef.current
+          sel?.(stop.id)
+          if (ins) {
+            d({ type: 'insertStop', ...ins, stopId: stop.id, platformId: platform.id })
+            stateRef.current.onInserted?.()
+            return
+          }
+          if (ed) {
+            d({
+              type: 'appendStop',
+              routeId: ed.routeId,
+              dirKey: ed.dirKey,
+              stopId: stop.id,
+              platformId: platform.id,
+            })
+          }
+        })
       })
     }
   }, [project.stops, activeDir, selectedStopId, stopMeta])
@@ -375,9 +447,50 @@ export default function MapCanvas({
   return <div ref={hostRef} className="map-host" />
 }
 
-// Dragging a leg inserts (or moves) a via point so the leg follows another road.
-function attachLegDragging(map, line, dragLayer, stateRef, info) {
-  line.on('mousedown', (e) => {
+// Editing a drawn section: clicking it drops a waypoint where you clicked, and
+// dragging it drops one where you let go. Leaflet starts panning the map on the
+// same mousedown, which would cancel the drag, so panning is switched off while
+// the pointer is over an editable line.
+function attachLegEditing(map, hit, line, dragLayer, stateRef, info) {
+  const addVia = (latlng, grabLatLng) => {
+    // Waypoints stay in travel order: count the ones that sit before the point
+    // we grabbed.
+    const grabIndex = closestSegmentIndex(info.coords, [grabLatLng.lat, grabLatLng.lng])
+    const splits = info.leg.viaSplits || []
+    const viaIndex = Math.min(
+      splits.filter((s) => s <= grabIndex).length,
+      info.leg.vias.length,
+    )
+    stateRef.current.dispatch({
+      type: 'addVia',
+      routeId: info.routeId,
+      dirKey: info.dirKey,
+      index: info.index,
+      viaIndex,
+      via: [latlng.lat, latlng.lng],
+    })
+  }
+
+  let hovering = false
+  hit.on('mouseover', () => {
+    if (stateRef.current.tool === 'bbox') return
+    hovering = true
+    map.dragging.disable()
+    line.setStyle({ weight: 10 })
+  })
+  hit.on('mouseout', () => {
+    hovering = false
+    map.dragging.enable()
+    line.setStyle({ weight: 7 })
+  })
+
+  hit.on('click', (e) => {
+    if (stateRef.current.tool === 'bbox') return
+    L.DomEvent.stop(e)
+    addVia(e.latlng, e.latlng)
+  })
+
+  hit.on('mousedown', (e) => {
     if (stateRef.current.tool === 'bbox') return
     L.DomEvent.stop(e)
     map.dragging.disable()
@@ -393,34 +506,35 @@ function attachLegDragging(map, line, dragLayer, stateRef, info) {
       weight: 2,
       dashArray: '4 4',
     }).addTo(dragLayer)
+    let dragged = false
 
     const onMove = (ev) => {
+      dragged = true
       ghost.setLatLng(ev.latlng)
       preview.setLatLngs([e.latlng, ev.latlng])
     }
     const onUp = (ev) => {
       map.off('mousemove', onMove)
       map.off('mouseup', onUp)
-      map.dragging.enable()
+      if (!hovering) map.dragging.enable()
       dragLayer.clearLayers()
-      const moved = map.latLngToLayerPoint(ev.latlng).distanceTo(map.latLngToLayerPoint(e.latlng))
+      if (!dragged) return // a plain click is handled by the click handler
+      const moved = map
+        .latLngToLayerPoint(ev.latlng)
+        .distanceTo(map.latLngToLayerPoint(e.latlng))
       if (moved < 6) return
-      // Where along the leg did the drag start? Vias before that point keep
-      // their order, so the new one slots in right after them.
-      const grabIndex = closestSegmentIndex(info.coords, [e.latlng.lat, e.latlng.lng])
-      const splits = info.leg.viaSplits || []
-      let viaIndex = splits.filter((s) => s <= grabIndex).length
-      viaIndex = Math.min(viaIndex, info.leg.vias.length)
-      stateRef.current.dispatch({
-        type: 'addVia',
-        routeId: info.routeId,
-        dirKey: info.dirKey,
-        index: info.index,
-        viaIndex,
-        via: [ev.latlng.lat, ev.latlng.lng],
-      })
+      addVia(ev.latlng, e.latlng)
     }
     map.on('mousemove', onMove)
     map.on('mouseup', onUp)
+  })
+
+  // Leaflet keeps the disabled state on the map, so make sure a removed line
+  // never leaves panning switched off.
+  hit.on('remove', () => {
+    if (hovering) {
+      hovering = false
+      map.dragging.enable()
+    }
   })
 }

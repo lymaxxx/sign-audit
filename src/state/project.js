@@ -2,6 +2,7 @@
 // one serialisable object so it can be saved to localStorage and exported.
 
 import { haversine } from '../lib/geo.js'
+import { baseStopName, platformQualifier, stopGroupKey } from '../lib/stopNames.js'
 
 export const PALETTE = [
   '#e4002b',
@@ -95,7 +96,26 @@ export function emptyProject() {
 }
 
 export function emptyDirection() {
-  return { stopIds: [], legs: [] }
+  return { stopIds: [], platformIds: [], legs: [] }
+}
+
+// A direction is stored as two parallel arrays (stop + which platform of that
+// stop is used). These helpers keep them in step: every mutation happens on a
+// list of {stopId, platformId} pairs.
+export function dirEntries(dir) {
+  if (!dir) return []
+  return dir.stopIds.map((stopId, i) => ({
+    stopId,
+    platformId: dir.platformIds?.[i] ?? null,
+  }))
+}
+
+function fromEntries(entries, legs) {
+  return {
+    stopIds: entries.map((e) => e.stopId),
+    platformIds: entries.map((e) => e.platformId ?? null),
+    legs,
+  }
 }
 
 export function makeRoute(index) {
@@ -122,7 +142,8 @@ function normaliseDirection(dir) {
   const want = Math.max(0, dir.stopIds.length - 1)
   const legs = dir.legs.slice(0, want)
   while (legs.length < want) legs.push(pendingLeg())
-  return { ...dir, legs }
+  const platformIds = dir.stopIds.map((_, i) => dir.platformIds?.[i] ?? null)
+  return { ...dir, platformIds, legs }
 }
 
 function mapDirection(state, routeId, dirKey, fn) {
@@ -147,37 +168,180 @@ export function routesAtStop(project, stopId) {
   )
 }
 
+// --- stops and their platforms -------------------------------------------
+//
+// A stop is a place on the schematic; a platform is a physical pole/kerb with
+// its own coordinates. Routes reference a stop *and* the platform they call
+// at, so road geometry stays accurate while the diagram shows one marker.
+
+export function makePlatform(record) {
+  return {
+    id: record.id || newId('p'),
+    name: record.name || '',
+    lat: record.lat,
+    lon: record.lon,
+    osmId: record.osmId || null,
+    kind: record.kind || 'bus',
+  }
+}
+
+export function stopFromPlatforms(platforms, id) {
+  const lat = platforms.reduce((sum, p) => sum + p.lat, 0) / platforms.length
+  const lon = platforms.reduce((sum, p) => sum + p.lon, 0) / platforms.length
+  // The tidiest of the platform names becomes the stop name.
+  const name =
+    platforms
+      .map((p) => baseStopName(p.name || ''))
+      .filter(Boolean)
+      .sort((a, b) => a.length - b.length)[0] || 'Unnamed stop'
+  return {
+    id: id || newId('s'),
+    name,
+    lat,
+    lon,
+    kind: platforms[0].kind || 'bus',
+    platforms,
+  }
+}
+
+export function platformOf(stop, platformId) {
+  if (!stop) return null
+  const list = stop.platforms || []
+  return list.find((p) => p.id === platformId) || null
+}
+
+// "Market Square" for a single-platform stop, "Market Square · east" otherwise.
+export function platformLabelFor(stop, platform) {
+  const list = stop.platforms || []
+  if (list.length <= 1 || !platform) return stop.name
+  const index = list.findIndex((p) => p.id === platform.id)
+  const qualifier = platformQualifier(platform.name || '') || `platform ${index + 1}`
+  return `${stop.name} · ${qualifier}`
+}
+
+// Short suffix for a sequence entry, or '' when the stop has one platform.
+export function entryPlatformSuffix(project, entry) {
+  const stop = stopById(project, entry.stopId)
+  if (!stop || (stop.platforms || []).length <= 1) return ''
+  const platform = platformOf(stop, entry.platformId)
+  if (!platform) return 'any platform'
+  const index = stop.platforms.findIndex((p) => p.id === platform.id)
+  return platformQualifier(platform.name || '') || `platform ${index + 1}`
+}
+
+// Coordinates a route should be routed through for this sequence entry.
+export function entryPoint(project, entry) {
+  const stop = stopById(project, entry.stopId)
+  if (!stop) return null
+  const platform = platformOf(stop, entry.platformId)
+  return platform ? [platform.lat, platform.lon] : [stop.lat, stop.lon]
+}
+
+function nearestPlatformDistance(stop, lat, lon) {
+  return (stop.platforms || []).reduce(
+    (min, p) => Math.min(min, haversine([p.lat, p.lon], [lat, lon])),
+    Infinity,
+  )
+}
+
+// Adds freshly downloaded platform records to the existing stops, folding
+// same-name platforms within `mergeRadius` into one stop.
 export function mergeIncomingStops(existing, incoming, mergeRadius) {
-  const out = existing.slice()
+  const out = existing.map((s) => ({ ...s, platforms: (s.platforms || []).slice() }))
+  const keyed = new Map()
+  out.forEach((stop, i) => {
+    const key = stopGroupKey(stop.name)
+    if (!keyed.has(key)) keyed.set(key, [])
+    keyed.get(key).push(i)
+  })
+
   let added = 0
   let merged = 0
-  for (const stop of incoming) {
-    const dup = out.find(
-      (s) =>
-        (s.osmId && s.osmId === stop.osmId) ||
-        (mergeRadius > 0 &&
-          normaliseName(s.name) === normaliseName(stop.name) &&
-          haversine([s.lat, s.lon], [stop.lat, stop.lon]) <= mergeRadius),
+  for (const record of incoming) {
+    const alreadyKnown = out.some((s) =>
+      (s.platforms || []).some((p) => p.osmId && p.osmId === record.osmId),
     )
-    if (dup) {
-      if (!dup.refs.includes(stop.osmId)) {
-        dup.refs = [...dup.refs, stop.osmId]
-        // Average the platforms so a merged stop sits between both kerbs.
-        const n = dup.refs.length
-        dup.lat = (dup.lat * (n - 1) + stop.lat) / n
-        dup.lon = (dup.lon * (n - 1) + stop.lon) / n
-        merged += 1
+    if (alreadyKnown) continue
+
+    const key = stopGroupKey(record.name)
+    const candidates = mergeRadius > 0 ? keyed.get(key) || [] : []
+    let host = null
+    let hostDist = Infinity
+    for (const i of candidates) {
+      const d = nearestPlatformDistance(out[i], record.lat, record.lon)
+      if (d <= mergeRadius && d < hostDist) {
+        host = i
+        hostDist = d
       }
-      continue
     }
-    out.push({ ...stop })
-    added += 1
+
+    const platform = makePlatform(record)
+    if (host !== null) {
+      out[host] = stopFromPlatforms([...out[host].platforms, platform], out[host].id)
+      merged += 1
+    } else {
+      const stop = stopFromPlatforms([platform])
+      out.push(stop)
+      if (!keyed.has(key)) keyed.set(key, [])
+      keyed.get(key).push(out.length - 1)
+      added += 1
+    }
   }
   return { stops: out, added, merged }
 }
 
-function normaliseName(name) {
-  return (name || '').trim().toLowerCase().replace(/\s+/g, ' ')
+// Re-groups stops that are already in the project (used by "merge duplicate
+// stops"). Returns the new stop list plus a map from every old stop id to the
+// stop/platform that replaced it, so routes can be rewritten.
+export function groupExistingStops(stops, mergeRadius) {
+  const groups = []
+  const remap = new Map()
+
+  for (const stop of stops) {
+    const platforms = (stop.platforms || []).length
+      ? stop.platforms
+      : [makePlatform({ name: stop.name, lat: stop.lat, lon: stop.lon, kind: stop.kind })]
+    const key = stopGroupKey(stop.name)
+    let host = null
+    let hostDist = Infinity
+    if (mergeRadius > 0) {
+      for (const group of groups) {
+        if (group.key !== key) continue
+        const d = group.platforms.reduce(
+          (min, p) => Math.min(min, haversine([p.lat, p.lon], [stop.lat, stop.lon])),
+          Infinity,
+        )
+        if (d <= mergeRadius && d < hostDist) {
+          host = group
+          hostDist = d
+        }
+      }
+    }
+    if (host) {
+      host.platforms.push(...platforms)
+      host.sources.push(stop)
+    } else {
+      groups.push({ key, platforms: platforms.slice(), sources: [stop], id: stop.id })
+    }
+  }
+
+  const merged = groups.map((group) => stopFromPlatforms(group.platforms, group.id))
+  groups.forEach((group, i) => {
+    const stop = merged[i]
+    for (const source of group.sources) {
+      // A stop that had exactly one platform keeps pointing at that platform,
+      // so existing route geometry stays exactly where it was.
+      const own = (source.platforms || []).length
+        ? source.platforms
+        : stop.platforms.filter((p) => p.name === source.name)
+      remap.set(source.id, {
+        stopId: stop.id,
+        platformId: own.length === 1 ? own[0].id : null,
+      })
+    }
+  })
+
+  return { stops: merged, remap, groupsMerged: stops.length - merged.length }
 }
 
 export function projectReducer(state, action) {
@@ -224,11 +388,9 @@ export function projectReducer(state, action) {
             dirs[key] = dir
             continue
           }
-          const keep = dir.stopIds.map((id, i) => [id, i]).filter(([id]) => id !== action.id)
-          dirs[key] = normaliseDirection({
-            stopIds: keep.map(([id]) => id),
-            legs: [], // geometry around the hole has to be recomputed
-          })
+          const keep = dirEntries(dir).filter((entry) => entry.stopId !== action.id)
+          // geometry around the hole has to be recomputed
+          dirs[key] = normaliseDirection(fromEntries(keep, []))
         }
         return { ...r, dirs }
       })
@@ -244,6 +406,59 @@ export function projectReducer(state, action) {
 
     case 'clearStops':
       return { ...state, stops: [], routes: [], overrides: {} }
+
+    case 'regroupStops': {
+      const { stops, remap, groupsMerged } = groupExistingStops(
+        state.stops,
+        action.mergeRadius ?? 0,
+      )
+      const routes = state.routes.map((route) => {
+        const dirs = {}
+        for (const key of ['fwd', 'bwd']) {
+          const dir = route.dirs[key]
+          if (!dir) {
+            dirs[key] = dir
+            continue
+          }
+          const entries = []
+          const legs = dir.legs.slice()
+          dirEntries(dir).forEach((entry, i) => {
+            const target = remap.get(entry.stopId)
+            if (!target) {
+              entries.push(entry)
+              return
+            }
+            const next = {
+              stopId: target.stopId,
+              // an explicit platform survives the merge; otherwise inherit the
+              // one this stop contributed
+              platformId: entry.platformId ?? target.platformId ?? null,
+            }
+            const prev = entries[entries.length - 1]
+            if (prev && prev.stopId === next.stopId) {
+              // two platforms of the same stop in a row collapse into one call
+              legs.splice(Math.max(0, i - 1), 2, pendingLeg())
+              return
+            }
+            entries.push(next)
+          })
+          dirs[key] = normaliseDirection(fromEntries(entries, legs))
+        }
+        return { ...route, dirs }
+      })
+      const overrides = {}
+      for (const [stopId, pos] of Object.entries(state.overrides)) {
+        const target = remap.get(stopId)
+        if (target) overrides[target.stopId] = pos
+      }
+      return {
+        ...state,
+        stops,
+        routes,
+        overrides,
+        lastImport: { added: 0, merged: groupsMerged, at: Date.now(), regrouped: true },
+      }
+    }
 
     case 'addRoute': {
       const route = action.route || makeRoute(state.routes.length)
@@ -271,44 +486,67 @@ export function projectReducer(state, action) {
 
     case 'appendStop':
       return mapDirection(state, action.routeId, action.dirKey, (dir) => {
-        if (dir.stopIds[dir.stopIds.length - 1] === action.stopId) return dir
-        return { ...dir, stopIds: [...dir.stopIds, action.stopId] }
+        const entries = dirEntries(dir)
+        const last = entries[entries.length - 1]
+        // Clicking the same platform twice in a row is a slip, not a stop.
+        if (last && last.stopId === action.stopId && last.platformId === (action.platformId ?? null)) {
+          return dir
+        }
+        entries.push({ stopId: action.stopId, platformId: action.platformId ?? null })
+        return fromEntries(entries, dir.legs.slice())
       })
 
     case 'insertStop':
       return mapDirection(state, action.routeId, action.dirKey, (dir) => {
-        const stopIds = dir.stopIds.slice()
-        stopIds.splice(action.index, 0, action.stopId)
+        const entries = dirEntries(dir)
+        entries.splice(action.index, 0, {
+          stopId: action.stopId,
+          platformId: action.platformId ?? null,
+        })
         const legs = dir.legs.slice()
         // The leg we split and the new one both need routing again.
         legs.splice(Math.max(0, action.index - 1), 1, pendingLeg(), pendingLeg())
-        return { stopIds, legs }
+        return fromEntries(entries, legs)
+      })
+
+    case 'setEntryPlatform':
+      return mapDirection(state, action.routeId, action.dirKey, (dir) => {
+        const entries = dirEntries(dir)
+        if (!entries[action.index]) return dir
+        entries[action.index] = { ...entries[action.index], platformId: action.platformId }
+        const legs = dir.legs.slice()
+        // Both legs touching this stop have to be re-routed to the new kerb.
+        if (legs[action.index - 1]) legs[action.index - 1] = pendingLeg()
+        if (legs[action.index]) legs[action.index] = pendingLeg()
+        return fromEntries(entries, legs)
       })
 
     case 'removeStopAt':
       return mapDirection(state, action.routeId, action.dirKey, (dir) => {
-        const stopIds = dir.stopIds.slice()
-        stopIds.splice(action.index, 1)
+        const entries = dirEntries(dir)
+        entries.splice(action.index, 1)
         const legs = dir.legs.slice()
         legs.splice(Math.max(0, action.index - 1), 2, pendingLeg())
-        return { stopIds, legs }
+        return fromEntries(entries, legs)
       })
 
     case 'moveStopInDir':
       return mapDirection(state, action.routeId, action.dirKey, (dir) => {
-        const stopIds = dir.stopIds.slice()
+        const entries = dirEntries(dir)
         const to = action.index + action.delta
-        if (to < 0 || to >= stopIds.length) return dir
-        const [id] = stopIds.splice(action.index, 1)
-        stopIds.splice(to, 0, id)
-        return { stopIds, legs: [] }
+        if (to < 0 || to >= entries.length) return dir
+        const [entry] = entries.splice(action.index, 1)
+        entries.splice(to, 0, entry)
+        return fromEntries(entries, [])
       })
 
     case 'setDirStops':
-      return mapDirection(state, action.routeId, action.dirKey, () => ({
-        stopIds: action.stopIds,
-        legs: action.legs || [],
-      }))
+      return mapDirection(state, action.routeId, action.dirKey, () =>
+        fromEntries(
+          action.entries || (action.stopIds || []).map((id) => ({ stopId: id, platformId: null })),
+          action.legs || [],
+        ),
+      )
 
     case 'clearDir':
       return mapDirection(state, action.routeId, action.dirKey, () => emptyDirection())
@@ -363,7 +601,7 @@ export function projectReducer(state, action) {
       const route = state.routes.find((r) => r.id === action.routeId)
       if (!route) return state
       const fwd = route.dirs.fwd
-      const stopIds = fwd.stopIds.slice().reverse()
+      const entries = dirEntries(fwd).reverse()
       // Mirror the forward geometry so the reverse path follows the same roads
       // without another routing round-trip.
       const legs = fwd.legs
@@ -374,7 +612,7 @@ export function projectReducer(state, action) {
           coords: leg.coords ? leg.coords.slice().reverse() : null,
           status: leg.coords ? leg.status : 'pending',
         }))
-      return mapDirection(state, action.routeId, 'bwd', () => ({ stopIds, legs }))
+      return mapDirection(state, action.routeId, 'bwd', () => fromEntries(entries, legs))
     }
 
     case 'startManualReverse':
@@ -411,7 +649,14 @@ export function migrate(raw) {
   const project = { ...base, ...raw }
   project.schematic = deepMerge(base.schematic, raw.schematic || {})
   project.overrides = raw.overrides || {}
-  project.stops = (raw.stops || []).map((s) => ({ refs: [], ...s }))
+  project.stops = (raw.stops || []).map((stop) => {
+    if (stop.platforms?.length) return stop
+    // pre-platform projects: the stop itself becomes its only platform
+    return stopFromPlatforms(
+      [makePlatform({ name: stop.name, lat: stop.lat, lon: stop.lon, kind: stop.kind })],
+      stop.id,
+    )
+  })
   project.routes = (raw.routes || []).map((r, i) => ({
     ...makeRoute(i),
     ...r,

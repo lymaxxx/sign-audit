@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { enqueue, routeThrough, straightLeg } from '../services/routing.js'
 import { networkHint } from '../lib/env.js'
+import { dirEntries, entryPoint } from '../state/project.js'
 
 // Watches the project for legs that still need geometry and fills them in,
 // one at a time, from the routing service (or with a straight line when the
@@ -15,12 +16,16 @@ export function useAutoRouting(project, dispatch) {
       for (const dirKey of ['fwd', 'bwd']) {
         const dir = route.dirs[dirKey]
         if (!dir) continue
+        const entries = dirEntries(dir)
         dir.legs.forEach((leg, index) => {
           if (leg.status !== 'pending') return
-          const from = project.stops.find((s) => s.id === dir.stopIds[index])
-          const to = project.stops.find((s) => s.id === dir.stopIds[index + 1])
+          const from = entries[index]
+          const to = entries[index + 1]
           if (!from || !to) return
-          jobs.push({ route, dirKey, index, leg, from, to })
+          const fromPoint = entryPoint(project, from)
+          const toPoint = entryPoint(project, to)
+          if (!fromPoint || !toPoint) return
+          jobs.push({ route, dirKey, index, leg, from, to, fromPoint, toPoint })
         })
       }
     }
@@ -29,15 +34,20 @@ export function useAutoRouting(project, dispatch) {
     if (!jobs.length) return
 
     for (const job of jobs.slice(0, 6)) {
-      const key = `${job.route.id}:${job.dirKey}:${job.index}:${job.leg.vias.length}:${job.from.id}:${job.to.id}`
+      const key = [
+        job.route.id,
+        job.dirKey,
+        job.index,
+        job.from.stopId,
+        job.from.platformId,
+        job.to.stopId,
+        job.to.platformId,
+        JSON.stringify(job.leg.vias),
+      ].join(':')
       if (inFlight.current.has(key)) continue
       inFlight.current.add(key)
 
-      const points = [
-        [job.from.lat, job.from.lon],
-        ...job.leg.vias,
-        [job.to.lat, job.to.lon],
-      ]
+      const points = [job.fromPoint, ...job.leg.vias, job.toPoint]
 
       const finish = (leg) => {
         inFlight.current.delete(key)

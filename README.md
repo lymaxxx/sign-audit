@@ -32,9 +32,16 @@ JSON at any time.
 - **Find a place** — search by name (Nominatim) and jump there.
 - **Draw bounding box** — drag a rectangle over the area you care about.
 - **Load stops in area** — queries Overpass for stops inside the box. Choose which kinds to
-  fetch (bus, tram, rail/metro, ferry). Platforms on opposite sides of a street that share a
-  name are merged into a single stop within the configurable radius (45 m by default), which is
-  what you want for a schematic.
+  fetch (bus, tram, rail/metro, ferry).
+- **Stops and platforms** — the two sides of a street are one *stop* with two *platforms*. Records
+  that share a name within the merge radius (45 m by default) are folded together, and names like
+  `Market Square (east)`, `Hauptbahnhof Nord`, `High Street / Stand C` or `Рынок (север)` count as
+  the same stop. Every platform keeps its own coordinates and its own dot on the map, so routes are
+  traced along the correct kerb while the diagram shows a single station. A stop that legitimately
+  ends in a compass word (`Flughafen Süd`) keeps its full name.
+- **Merge duplicate stops** re-runs that grouping over stops already in the project — useful if you
+  imported them before, or with merging switched off. Routes are rewired to the merged stops and
+  keep the platform they were drawn through, so no geometry is lost.
 - Stops can also be placed by hand, renamed inline, and deleted.
 
 ### 2. Routes
@@ -42,9 +49,13 @@ JSON at any time.
 - **New route** gives you a number, name, colour, mode and a road-snapping toggle.
 - Pick **Outbound**, then click the stops on the map in order. Each section between two stops is
   routed along the road network (OSRM) automatically.
-- **Wrong road?** Drag the drawn line onto the road you want — a detour point is inserted and the
-  section is re-routed through it. Detour points can be dragged again or removed with a
-  right-click; right-clicking the line resets the section.
+- **Wrong road?** Click the drawn line to drop a **waypoint** where you clicked, or drag the line
+  to where it should go. The section re-routes through the waypoint; waypoints can be dragged to
+  fine-tune and right-clicked to remove, and right-clicking the line clears the section's waypoints.
+- **Which platform** a call uses is shown under each stop in the sequence and can be changed from
+  the dropdown — handy when the return runs along the opposite kerb.
+- A section that ends up several times longer than the direct distance is flagged in amber: that
+  usually means the router looped around a block, and a waypoint puts it right.
 - **Return direction**: *Mirror outbound as return* reuses the outbound geometry backwards, or
   *Draw return manually* lets you click a different sequence (different streets, extra stops —
   whatever the real route does).
@@ -62,8 +73,10 @@ Switching to the schematic view generates the diagram automatically:
   the lines at an interchange, each with its own size, fill, outline width and colour.
 - **Parallel corridors** — routes that share the same section of a corridor are drawn side by
   side with a consistent ordering instead of overlapping.
-- **Direction arrows** — a section used by a route in only one direction (because the return
-  runs elsewhere) is marked with arrows pointing the way of travel.
+- **Direction arrows** — only where a route genuinely runs one way: it needs both directions
+  defined, and the arrows appear on the sections whose *stops* differ (an extra stop on the
+  return, say). A route drawn in one direction only, or one whose return simply takes different
+  streets between the same stops, is drawn as a single plain line.
 - Labels, route number badges at the termini, a legend, background colour and line casing are
   all adjustable, and any station can be dragged by hand; **Reset dragged stops** returns them to
   the solver.
@@ -93,9 +106,10 @@ network is optimised around them.
 
 | Path | What lives there |
 | --- | --- |
-| `src/state/project.js` | The whole project document + reducer (stops, routes, schematic settings) |
+| `src/state/project.js` | The whole project document + reducer (stops, platforms, routes, settings) |
+| `src/lib/stopNames.js` | Name tidying that decides which platforms belong to the same stop |
 | `src/services/` | Overpass (stops), Nominatim (search), OSRM (road routing + cache) |
-| `src/map/MapCanvas.jsx` | Leaflet map: bounding box, stop layer, route drawing, drag-to-reroute |
+| `src/map/MapCanvas.jsx` | Leaflet map: bounding box, platform layer, route drawing, waypoint editing |
 | `src/schematic/graph.js` | Routes → network graph (nodes, shared edges, direction usage) |
 | `src/schematic/layout.js` | The angle-snapping layout solver |
 | `src/schematic/build.js` | Parallel offsets, corners, markers, arrows, label placement |

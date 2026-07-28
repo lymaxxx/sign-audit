@@ -1,6 +1,5 @@
 // Pulls public-transport stops out of OpenStreetMap through Overpass.
 
-import { newId } from '../state/project.js'
 import { networkHint } from '../lib/env.js'
 
 const ENDPOINTS = [
@@ -59,9 +58,7 @@ export async function fetchStops(bbox, kinds, { signal } = {}) {
         .map((el) => {
           const tags = el.tags || {}
           return {
-            id: newId('s'),
             osmId: `n${el.id}`,
-            refs: [`n${el.id}`],
             name: tags.name || tags['name:en'] || tags.ref || 'Unnamed stop',
             lat: el.lat,
             lon: el.lon,

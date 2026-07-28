@@ -60,7 +60,9 @@ export default function DataPanel({
     if (!project.lastImport) return
     setMessage({
       kind: 'ok',
-      text: `Added ${project.lastImport.added} stops (${project.lastImport.merged} platforms merged into existing stops).`,
+      text: project.lastImport.regrouped
+        ? `Merged ${project.lastImport.merged} stop(s) into their twins — routes now share one marker per stop.`
+        : `Added ${project.lastImport.added} stops (${project.lastImport.merged} platforms folded into existing stops).`,
     })
   }, [project.lastImport])
 
@@ -134,7 +136,10 @@ export default function DataPanel({
           ))}
         </div>
 
-        <Field label="Merge platforms within (m)" hint="Combines both sides of a street that share a name into one stop.">
+        <Field
+          label="Merge platforms within (m)"
+          hint="Both sides of a street become one stop with two platforms. Names like 'Foo (east)' or 'Foo platform 2' count as the same stop."
+        >
           <input
             type="number"
             min={0}
@@ -147,6 +152,16 @@ export default function DataPanel({
         <div className="button-row">
           <button className="primary" onClick={loadStops} disabled={!project.bbox || loading}>
             {loading ? 'Querying OpenStreetMap…' : '⇩ Load stops in area'}
+          </button>
+        </div>
+
+        <div className="button-row">
+          <button
+            onClick={() => dispatch({ type: 'regroupStops', mergeRadius })}
+            disabled={!project.stops.length}
+            title="Fold stops that share a name (ignoring (east)/(south)/platform suffixes) into one stop with several platforms"
+          >
+            ⧉ Merge duplicate stops
           </button>
         </div>
 
@@ -204,6 +219,11 @@ export default function DataPanel({
                   }}
                 >
                   <span className={`dot ${stop.kind}`} />
+                  {(stop.platforms?.length || 1) > 1 && (
+                    <span className="platform-count" title={`${stop.platforms.length} platforms`}>
+                      {stop.platforms.length}
+                    </span>
+                  )}
                   {stop.id === selectedStopId ? (
                     <input
                       value={stop.name}
