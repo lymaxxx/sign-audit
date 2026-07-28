@@ -3,10 +3,23 @@
 Draw bus, tram and rail routes on top of real OpenStreetMap data, then let the app turn them
 into a clean, London-style schematic diagram.
 
+## Ready-made file
+
+`dist-single/transit-map-generator.html` is the whole app in one self-contained file — open it
+in a browser and it runs. No install, no server, no build step. Rebuild it after code changes
+with `npm run build:single`.
+
+If the browser blocks the app's calls to OpenStreetMap because the page was opened straight off
+the disk (the app tells you when that happens), serve the folder over http instead — e.g.
+`npx serve dist-single` — or run the dev server below.
+
+## Running from source
+
 ```bash
 npm install
-npm run dev      # http://localhost:5173
-npm run build    # static bundle in dist/
+npm run dev           # http://localhost:5173
+npm run build         # static bundle in dist/
+npm run build:single  # one self-contained .html in dist-single/
 ```
 
 Everything runs in the browser. The project is kept in `localStorage` and can be exported to

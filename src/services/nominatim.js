@@ -1,5 +1,7 @@
 // Place search (geocoding) via Nominatim.
 
+import { networkHint } from '../lib/env.js'
+
 export async function searchPlaces(query, { signal } = {}) {
   if (!query.trim()) return []
   const url = new URL('https://nominatim.openstreetmap.org/search')
@@ -7,7 +9,13 @@ export async function searchPlaces(query, { signal } = {}) {
   url.searchParams.set('format', 'jsonv2')
   url.searchParams.set('limit', '8')
   url.searchParams.set('addressdetails', '0')
-  const res = await fetch(url, { signal, headers: { Accept: 'application/json' } })
+  let res
+  try {
+    res = await fetch(url, { signal, headers: { Accept: 'application/json' } })
+  } catch (err) {
+    if (err.name === 'AbortError') throw err
+    throw new Error(`Search failed: ${err.message}.${networkHint()}`)
+  }
   if (!res.ok) throw new Error(`Search failed (${res.status})`)
   const json = await res.json()
   return json.map((item) => ({

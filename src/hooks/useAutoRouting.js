@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { enqueue, routeThrough, straightLeg } from '../services/routing.js'
+import { networkHint } from '../lib/env.js'
 
 // Watches the project for legs that still need geometry and fills them in,
 // one at a time, from the routing service (or with a straight line when the
@@ -60,7 +61,7 @@ export function useAutoRouting(project, dispatch) {
           finish({ coords: res.coords, status: 'road', viaSplits: res.viaSplits })
         })
         .catch((err) => {
-          setStatus((prev) => ({ ...prev, error: err.message }))
+          setStatus((prev) => ({ ...prev, error: `${err.message}${networkHint()}` }))
           finish({ ...straightLeg(points), status: 'error', error: err.message })
         })
     }

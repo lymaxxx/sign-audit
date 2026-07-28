@@ -1,6 +1,7 @@
 // Pulls public-transport stops out of OpenStreetMap through Overpass.
 
 import { newId } from '../state/project.js'
+import { networkHint } from '../lib/env.js'
 
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
@@ -74,6 +75,6 @@ export async function fetchStops(bbox, kinds, { signal } = {}) {
     }
   }
   throw new Error(
-    `Could not reach any Overpass server (${lastError ? lastError.message : 'unknown error'}). Try a smaller area or retry in a moment.`,
+    `Could not reach any Overpass server (${lastError ? lastError.message : 'unknown error'}). Try a smaller area or retry in a moment.${networkHint()}`,
   )
 }
