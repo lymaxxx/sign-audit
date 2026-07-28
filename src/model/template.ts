@@ -46,7 +46,6 @@ export type StyleRole =
   | 'title'
   | 'subtitle'
   | 'routeNumber'
-  | 'routeMode'
   | 'destination'
   | 'viaList'
   | 'columnHeader'
@@ -185,6 +184,29 @@ export interface ZoneConfig {
   /** Zone type is sized against the sheet, not against a route block, so it
    *  stays put when the block width changes. This scales it independently. */
   scale: number
+  /**
+   * Stack the text items one under another instead of placing them at fixed
+   * offsets. Fixed offsets are fine until the title's size is raised, at which
+   * point it grows down into the subtitle; stacked, each item starts below the
+   * measured bottom of the one before it. Images and shapes keep their own
+   * positions either way, so a logo can still sit wherever it is dragged.
+   */
+  stack: boolean
+  /** Space between stacked text items, in mm. */
+  stackGap: number
+  /** A mark set to the left of the stacked text, aligned with it. */
+  pictogram: {
+    show: boolean
+    /** Inline SVG markup, or a data URI for raster art. */
+    source: string
+    format: 'svg' | 'raster'
+    /** Drawn as a square this many mm wide. */
+    size: number
+    /** Space between the mark and the text. */
+    gap: number
+    /** Against the top of the text block, its middle, or its baseline row. */
+    align: 'top' | 'middle' | 'bottom'
+  }
   items: VectorItem[]
 }
 
@@ -241,7 +263,6 @@ export interface BlockConfig {
   /** Tint behind the day-type column headings. */
   columnHeaderFill: ColorToken | string | 'none'
   showViaList: boolean
-  showMode: boolean
   showColumnHeaders: boolean
   /** Times per row in a flat departure list; `auto` fits as many as will go. */
   timesPerRow: 'auto' | number

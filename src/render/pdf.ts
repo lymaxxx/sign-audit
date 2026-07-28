@@ -159,9 +159,9 @@ const drawPrimitive = async (
 
     case 'path':
       pdfPage.drawSvgPath(prim.d, {
-        x: frame.x(0),
-        y: frame.y(0),
-        scale: mmToPt(1),
+        x: frame.x(prim.x),
+        y: frame.y(prim.y),
+        scale: mmToPt(prim.scale),
         ...(prim.fill ? { color: color(prim.fill) } : {}),
         ...(prim.stroke
           ? { borderColor: color(prim.stroke), borderWidth: frame.len(prim.strokeWidth ?? 0.2) }

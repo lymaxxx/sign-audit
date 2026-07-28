@@ -4,6 +4,7 @@ import { wrapText } from './fonts'
 import type { Primitive } from './primitives'
 import type { Rect } from '../model/units'
 import type { VectorItem, ZoneConfig } from '../model/template'
+import { artworkPrimitives, parseArtwork } from './svgArt'
 
 /**
  * Header and footer are reserved bands, not overlays.
@@ -78,15 +79,43 @@ export const resolveItemRect = (item: VectorItem, zone: ZoneConfig, box: Rect): 
   return { x, y, w: item.w, h: item.h }
 }
 
+interface DrawnText {
+  prims: Primitive[]
+  /** What the text actually occupied, which is what a stack advances by. */
+  height: number
+}
+
+
+/**
+ * Place a mark in a box.
+ *
+ * Vector art is converted to paths rather than nested as an SVG document,
+ * because the PDF writer draws paths and would otherwise drop the artwork
+ * silently — a logo that survives the preview and vanishes from the print is
+ * worse than one that never appeared.
+ */
+const drawArtwork = (
+  source: string,
+  format: 'svg' | 'raster',
+  box: Rect,
+  tint?: string,
+): Primitive[] => {
+  if (!source) return []
+  if (format !== 'svg') {
+    return [{ type: 'image', x: box.x, y: box.y, w: box.w, h: box.h, source, format }]
+  }
+  return artworkPrimitives(parseArtwork(source), box, tint)
+}
+
 const drawTextItem = (
   ctx: LayoutContext,
   item: Extract<VectorItem, { kind: 'text' }>,
   box: Rect,
   tokens: TokenValues,
   scale: number,
-): Primitive[] => {
+): DrawnText => {
   const body = substituteTokens(item.text, tokens)
-  if (!body.trim()) return []
+  if (!body.trim()) return { prims: [], height: 0 }
 
   const zoneCtx: LayoutContext = { ...ctx, scale }
   const style = styleOf(zoneCtx, item.role)
@@ -127,7 +156,9 @@ const drawTextItem = (
   lines.forEach((line, i) => {
     out.push(...emitText(zoneCtx, line, item.role, anchorX, top + i * lineH + baseline, item.align))
   })
-  return out
+
+  const frameHeight = frame?.show ? blockHeight + frame.padding.top + frame.padding.bottom : blockHeight
+  return { prims: out, height: frameHeight }
 }
 
 const drawShapeItem = (
@@ -170,12 +201,13 @@ const drawPatternItem = (
 ): Primitive[] => {
   if (item.tileWidth <= 0) return []
   const count = Math.ceil(box.w / item.tileWidth)
+  const art = parseArtwork(item.source)
   const out: Primitive[] = []
   for (let i = 0; i < count; i++) {
     const x = box.x + i * item.tileWidth
     const w = Math.min(item.tileWidth, box.x + box.w - x)
     if (w <= 0) break
-    out.push({ type: 'image', x, y: box.y, w, h: box.h, source: item.source, format: 'svg' })
+    out.push(...artworkPrimitives(art, { x, y: box.y, w, h: box.h }))
   }
   return out
 }
@@ -195,12 +227,65 @@ export const layoutZone = (
     out.push({ type: 'rect', x: box.x, y: box.y, w: box.w, h: box.h, fill: colorOf(ctx, zone.background) })
   }
 
-  for (const item of zone.items) {
+  const p = zone.padding
+  const innerX = box.x + p.left
+  const innerY = box.y + p.top
+  const innerW = Math.max(0, box.w - p.left - p.right)
+
+  // A mark to the left of the text, with the text indented past it, so the two
+  // read as one unit rather than as art that happens to be nearby.
+  const pictogram = zone.pictogram
+  const markWidth = pictogram.show && pictogram.source ? pictogram.size + pictogram.gap : 0
+
+  const textItems = zone.items.filter((i): i is Extract<VectorItem, { kind: 'text' }> => i.kind === 'text')
+  const others = zone.items.filter((i) => i.kind !== 'text')
+
+  const stackedPrims: Primitive[] = []
+  let stackTop = innerY
+  let stackHeight = 0
+
+  if (zone.stack) {
+    let cursor = innerY
+    for (const item of textItems) {
+      const width = Math.max(0, Math.min(item.w, innerW - markWidth))
+      const drawn = drawTextItem(ctx, item, { x: innerX + markWidth, y: cursor, w: width, h: item.h }, tokens, zone.scale)
+      if (drawn.height === 0) continue
+      stackedPrims.push(...drawn.prims)
+      cursor += drawn.height + zone.stackGap
+    }
+    stackHeight = Math.max(0, cursor - innerY - zone.stackGap)
+  } else {
+    for (const item of textItems) {
+      const rect = resolveItemRect(item, zone, box)
+      const drawn = drawTextItem(ctx, item, { ...rect, x: rect.x + markWidth }, tokens, zone.scale)
+      stackedPrims.push(...drawn.prims)
+      stackTop = Math.min(stackTop, rect.y)
+      stackHeight = Math.max(stackHeight, rect.y + drawn.height - stackTop)
+    }
+  }
+
+  if (markWidth > 0) {
+    const offset =
+      pictogram.align === 'middle'
+        ? Math.max(0, (stackHeight - pictogram.size) / 2)
+        : pictogram.align === 'bottom'
+          ? Math.max(0, stackHeight - pictogram.size)
+          : 0
+    out.push(
+      ...drawArtwork(pictogram.source, pictogram.format, {
+        x: innerX,
+        y: stackTop + offset,
+        w: pictogram.size,
+        h: pictogram.size,
+      }),
+    )
+  }
+
+  out.push(...stackedPrims)
+
+  for (const item of others) {
     const rect = resolveItemRect(item, zone, box)
     switch (item.kind) {
-      case 'text':
-        out.push(...drawTextItem(ctx, item, rect, tokens, zone.scale))
-        break
       case 'shape':
         out.push(...drawShapeItem(ctx, item, rect))
         break
@@ -208,15 +293,7 @@ export const layoutZone = (
         out.push(...drawPatternItem(item, rect))
         break
       case 'image':
-        out.push({
-          type: 'image',
-          x: rect.x,
-          y: rect.y,
-          w: rect.w,
-          h: rect.h,
-          source: item.source,
-          format: item.format,
-        })
+        out.push(...drawArtwork(item.source, item.format, rect, item.tint ? colorOf(ctx, item.tint) : undefined))
         break
     }
   }

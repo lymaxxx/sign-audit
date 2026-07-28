@@ -48,7 +48,6 @@ export const defaultStyles = (): StyleSheet => ({
   subtitle: style({ sizePt: 9.5, weight: 400, color: 'muted', lineHeight: 1.25 }),
 
   routeNumber: style({ sizePt: 19, weight: 700, lineHeight: 1 }),
-  routeMode: style({ sizePt: 6, weight: 500, color: 'muted', transform: 'uppercase', tracking: 0.06 }),
   destination: style({ sizePt: 11, weight: 600, lineHeight: 1.15 }),
   viaList: style({ sizePt: 6.8, weight: 400, color: 'muted', lineHeight: 1.25 }),
 
@@ -111,7 +110,6 @@ export const defaultBlock = (): BlockConfig => ({
   headerRule: { show: true, thickness: 0.35, color: 'rule' },
   columnHeaderFill: 'none',
   showViaList: true,
-  showMode: true,
   showColumnHeaders: true,
   timesPerRow: 'auto',
   padding: insets(0),
@@ -147,6 +145,9 @@ const emptyZone = (height: number): ZoneConfig => ({
   divider: { show: true, thickness: 0.35, color: 'rule' },
   padding: insets(0),
   scale: 1,
+  stack: true,
+  stackGap: 1.5,
+  pictogram: { show: false, source: '', format: 'svg', size: 14, gap: 4, align: 'top' },
   items: [],
 })
 

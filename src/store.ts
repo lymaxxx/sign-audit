@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { MasterTemplate, VectorItem, ZoneId } from './model/template'
 import { createDefaultTemplate } from './model/defaults'
-import { emptyTimetable, type Timetable } from './model/types'
+import { emptyTimetable, type Route, type Timetable } from './model/types'
 import { makeDemoTimetable } from './model/demo'
 import type { StopEdits } from './model/sheet'
 import type { ImportIssue } from './import/types'
@@ -73,10 +73,20 @@ export interface AppState {
   editsFor: (stopId: string) => StopEdits
   updateEdits: (stopId: string, mutate: (edits: StopEdits) => void) => void
   addZoneItem: (zone: ZoneId, item: VectorItem) => void
+  /** Edit a line's own presentation — its colour, headsign, streets. */
+  updateRoute: (routeId: string, mutate: (route: Route) => void) => void
   removeZoneItem: (zone: ZoneId, itemId: string) => void
 }
 
-export type InspectorTab = 'artboard' | 'flow' | 'zones' | 'type' | 'colour' | 'rules' | 'stop'
+export type InspectorTab =
+  | 'artboard'
+  | 'flow'
+  | 'zones'
+  | 'type'
+  | 'colour'
+  | 'routes'
+  | 'rules'
+  | 'stop'
 
 const HISTORY_LIMIT = 60
 
@@ -258,6 +268,21 @@ export const useStore = create<AppState>((set, get) => ({
     get().commit('Edit stop', (draft) => {
       draft.edits[stopId] ??= {}
       mutate(draft.edits[stopId]!)
+    }),
+
+  updateRoute: (routeId, mutate) =>
+    get().commit('Edit route', (draft) => {
+      // Routes live in the timetable, which history entries share, so this one
+      // case has to replace rather than mutate.
+      draft.timetable = {
+        ...draft.timetable,
+        routes: draft.timetable.routes.map((r) => {
+          if (r.id !== routeId) return r
+          const copy = structuredClone(r)
+          mutate(copy)
+          return copy
+        }),
+      }
     }),
 
   addZoneItem: (zone, item) =>

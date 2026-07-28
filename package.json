@@ -14,7 +14,7 @@
     "tauri": "tauri",
     "proof": "tsx scripts/proof.ts",
     "proof:png": "tsx scripts/proof.ts && node scripts/shoot.mjs",
-    "build:single": "vite build --config vite.config.single.ts && node scripts/bundle-single.mjs",
+    "build:single": "vite build --config vite.config.single.ts && tsx scripts/bundle-single.ts",
     "check:single": "node scripts/check-single.mjs",
     "check:app": "node scripts/check-app.mjs",
     "examples": "tsx scripts/make-examples.ts",

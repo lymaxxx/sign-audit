@@ -45,8 +45,13 @@ export interface LinePrimitive {
 
 export interface PathPrimitive {
   type: 'path'
-  /** SVG path data, in millimetres, already positioned. */
+  /** Path data in its own coordinate system, placed by `x`, `y` and `scale`.
+   *  Kept unbaked so the PDF writer can hand it straight to its own path
+   *  drawing, which takes an origin and a scale rather than absolute data. */
   d: string
+  x: number
+  y: number
+  scale: number
   fill?: string
   stroke?: string
   strokeWidth?: number

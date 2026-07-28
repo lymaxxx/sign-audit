@@ -1,6 +1,8 @@
-import { readFile, writeFile, readdir } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BUNDLED_FONTS } from '../src/layout/fonts'
+import { cssFamily } from '../src/render/svg'
 
 /**
  * Folds the app into one HTML file that runs off a disk.
@@ -17,31 +19,24 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DIST = join(ROOT, 'dist-single')
 
-const WEIGHTS = { Thin: 100, Light: 300, Regular: 400, Text: 450, Medium: 500, SemiBold: 600, Bold: 700 }
-
 const run = async () => {
   const js = await readFile(join(DIST, 'app.js'), 'utf8')
   const css = await readFile(join(DIST, 'app.css'), 'utf8')
 
-  // The fonts serve twice over: the engine reads the bytes to measure text,
-  // and the browser needs the same faces to draw the preview.
-  const fontFiles = (await readdir(join(ROOT, 'fonts'))).filter((f) => f.endsWith('.ttf'))
-  const fonts = Object.fromEntries(
-    await Promise.all(
-      fontFiles.map(async (file) => [file, (await readFile(join(ROOT, 'fonts', file))).toString('base64')]),
-    ),
-  )
+  // Taken from the font registry rather than by reading the directory, so the
+  // faces the browser is given are exactly the cuts the engine will measure.
+  const fonts: Record<string, string> = {}
+  const faces: string[] = []
 
-  const fontFaces = fontFiles
-    .map((file) => {
-      const cut = /-(Thin|Light|Regular|Text|Medium|SemiBold|Bold)\.ttf$/.exec(file)?.[1] ?? 'Regular'
-      const family = file.startsWith('IBMPlexSansCondensed') ? 'algach-plex-condensed' : 'algach-plex'
-      return (
-        `@font-face{font-family:"${family}";font-weight:${WEIGHTS[cut]};font-style:normal;` +
-        `font-display:block;src:url(data:font/ttf;base64,${fonts[file]}) format("truetype")}`
-      )
-    })
-    .join('')
+  for (const cut of BUNDLED_FONTS) {
+    const base64 = (await readFile(join(ROOT, 'fonts', cut.file))).toString('base64')
+    fonts[cut.file] = base64
+    faces.push(
+      `@font-face{font-family:"${cssFamily(cut.family)}";font-weight:${cut.weight};` +
+        `font-style:${cut.italic ? 'italic' : 'normal'};font-display:block;` +
+        `src:url(data:font/ttf;base64,${base64}) format("truetype")}`,
+    )
+  }
 
   // Assembled by concatenation rather than by String.replace. A replacement
   // *string* gives `$` special meaning — "$`" stands for everything before the
@@ -53,7 +48,7 @@ const run = async () => {
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
     '<title>Algach — transit schedules</title>',
     '<style>',
-    fontFaces,
+    faces.join(''),
     css,
     '</style>',
     '<script>window.__ALGACH_FONTS__=',
@@ -66,7 +61,12 @@ const run = async () => {
 
   const out = join(ROOT, 'Algach.html')
   await writeFile(out, html, 'utf8')
-  console.log(`Algach.html  ${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MB  (${fontFiles.length} fonts inlined)`)
+
+  const families = new Set(BUNDLED_FONTS.map((f) => f.family))
+  console.log(
+    `Algach.html  ${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MB  ` +
+      `(${BUNDLED_FONTS.length} cuts across ${families.size} families)`,
+  )
 }
 
 await run()

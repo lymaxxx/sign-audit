@@ -327,27 +327,31 @@ const routeHeader = (ctx: LayoutContext, route: Route, x: number, y: number, w: 
   const textLeft = badgeW > 0 ? x + badgeW + s(ctx, 4) : x
   const textWidth = Math.max(0, w - (textLeft - x))
 
-  let textY = top
-  const dest = paragraph(ctx, route.terminal, 'destination', textLeft, textY, textWidth, 3)
-  prims.push(...dest.prims)
-  textY += dest.height
+  // Measured first, then placed. A one-line headsign beside a tall badge would
+  // otherwise sit at the badge's top edge with the rest of the badge's height
+  // as empty paper beneath it, and the rule below it further still.
+  const dest = paragraph(ctx, route.terminal, 'destination', textLeft, 0, textWidth, 3)
+  const via =
+    b.showViaList && route.via.length > 0
+      ? paragraph(ctx, route.via.join(', '), 'viaList', textLeft, 0, textWidth, 3)
+      : EMPTY
+  const viaGap = via.height > 0 ? s(ctx, 0.8) : 0
+  const textHeight = dest.height + viaGap + via.height
 
-  if (b.showViaList && route.via.length > 0) {
-    textY += s(ctx, 0.8)
-    const via = paragraph(ctx, route.via.join(', '), 'viaList', textLeft, textY, textWidth, 3)
-    prims.push(...via.prims)
-    textY += via.height
-  }
+  // Centred against the badge where it is shorter; otherwise the text leads.
+  const textTop = top + Math.max(0, (badgeH - textHeight) / 2)
 
-  let badgeColumnBottom = top + badgeH
-  if (b.showMode && route.mode && badge.shape !== 'none') {
-    const modeLine = lineMetrics(ctx, 'routeMode')
-    badgeColumnBottom += s(ctx, 1.2)
-    prims.push(...text(ctx, route.mode, 'routeMode', x, badgeColumnBottom + modeLine.baseline))
-    badgeColumnBottom += modeLine.height
-  }
+  const shift = (box: Box, dy: number): Primitive[] =>
+    box.prims.map((prim) => (prim.type === 'text' ? { ...prim, y: prim.y + dy } : prim))
 
-  return { height: Math.max(badgeColumnBottom, textY) - y, prims }
+  prims.push(...shift(dest, textTop))
+  if (via.height > 0) prims.push(...shift(via, textTop + dest.height + viaGap))
+
+  const textBottom = textTop + textHeight
+
+  // The badge and the text sit side by side, so the header is as tall as
+  // whichever runs longer — and no taller.
+  return { height: Math.max(top + badgeH, textBottom) - y, prims }
 }
 
 export interface RouteBlockInput {

@@ -3,6 +3,7 @@ import { Button, ColorInput, Field, Group, NumberInput, Row, Select, TextInput, 
 import { ARTBOARD_PRESETS } from '../model/defaults'
 import type { MasterTemplate, StyleRole, VectorItem, ZoneId } from '../model/template'
 import { routesAtStop } from '../model/types'
+import { BUNDLED_FONTS, FAMILY_LABELS } from '../layout/fonts'
 import type { Page } from '../layout'
 
 /** Every knob in the master template, grouped the way the work divides up. */
@@ -13,6 +14,7 @@ const TABS: Array<{ id: InspectorTab; label: string }> = [
   { id: 'zones', label: 'Header & footer' },
   { id: 'type', label: 'Type' },
   { id: 'colour', label: 'Colour' },
+  { id: 'routes', label: 'Routes' },
   { id: 'rules', label: 'Rules' },
   { id: 'stop', label: 'This stop' },
 ]
@@ -21,7 +23,6 @@ const STYLE_ROLES: Array<{ id: StyleRole; label: string; note?: string }> = [
   { id: 'title', label: 'Title' },
   { id: 'subtitle', label: 'Subtitle' },
   { id: 'routeNumber', label: 'Route number' },
-  { id: 'routeMode', label: 'Mode' },
   { id: 'destination', label: 'Destination' },
   { id: 'viaList', label: 'Streets' },
   { id: 'columnHeader', label: 'Day-type heading' },
@@ -35,7 +36,16 @@ const STYLE_ROLES: Array<{ id: StyleRole; label: string; note?: string }> = [
   { id: 'footerText', label: 'Footer text' },
 ]
 
-const WEIGHTS = [100, 300, 400, 450, 500, 600, 700].map((w) => ({ value: String(w), label: String(w) }))
+const FONT_FAMILIES = [...new Set(BUNDLED_FONTS.map((f) => f.family))].map((family) => ({
+  value: family,
+  label: FAMILY_LABELS[family] ?? family,
+}))
+
+/** Only the weights a family actually has; the rest would silently snap. */
+const weightsFor = (family: string) =>
+  [...new Set(BUNDLED_FONTS.filter((f) => f.family === family).map((f) => f.weight))]
+    .sort((a, b) => a - b)
+    .map((w) => ({ value: String(w), label: String(w) }))
 
 const useTemplateEdit = () => {
   const commit = useStore((s) => s.commit)
@@ -225,7 +235,6 @@ const FlowPanel = ({ page }: { page: Page | null }) => {
           />
         </Field>
         <Toggle label="Show street list" value={t.block.showViaList} onChange={(v) => edit('Streets', (tpl) => void (tpl.block.showViaList = v))} />
-        <Toggle label="Show mode under the badge" value={t.block.showMode} onChange={(v) => edit('Mode', (tpl) => void (tpl.block.showMode = v))} />
         <Toggle label="Show day-type headings" value={t.block.showColumnHeaders} onChange={(v) => edit('Headings', (tpl) => void (tpl.block.showColumnHeaders = v))} />
       </Group>
 
@@ -332,6 +341,85 @@ const ZonesPanel = () => {
             value={t.zones[zone].divider.show}
             onChange={(v) => edit('Divider', (tpl) => void (tpl.zones[zone].divider.show = v))}
           />
+          <Field label="Background">
+            <ColorInput
+              value={t.zones[zone].background === 'none' ? '#ffffff' : String(t.zones[zone].background)}
+              onChange={(v) => edit('Band fill', (tpl) => void (tpl.zones[zone].background = v))}
+            />
+          </Field>
+          <Toggle
+            label="No background"
+            value={t.zones[zone].background === 'none'}
+            onChange={(v) => edit('Band fill', (tpl) => void (tpl.zones[zone].background = v ? 'none' : '#f4f4f5'))}
+          />
+          <Toggle
+            label="Stack text items"
+            value={t.zones[zone].stack}
+            onChange={(v) => edit('Stack', (tpl) => void (tpl.zones[zone].stack = v))}
+          />
+          {t.zones[zone].stack ? (
+            <Field label="Space between them">
+              <NumberInput
+                value={t.zones[zone].stackGap}
+                min={0}
+                step={0.5}
+                suffix="mm"
+                onChange={(v) => edit('Stack gap', (tpl) => void (tpl.zones[zone].stackGap = v))}
+              />
+            </Field>
+          ) : null}
+
+          <Toggle
+            label="Pictogram to the left of the text"
+            value={t.zones[zone].pictogram.show}
+            onChange={(v) => edit('Pictogram', (tpl) => void (tpl.zones[zone].pictogram.show = v))}
+          />
+          {t.zones[zone].pictogram.show ? (
+            <>
+              <Row>
+                <Field label="Size">
+                  <NumberInput
+                    value={t.zones[zone].pictogram.size}
+                    min={2}
+                    suffix="mm"
+                    onChange={(v) => edit('Pictogram', (tpl) => void (tpl.zones[zone].pictogram.size = v))}
+                  />
+                </Field>
+                <Field label="Gap">
+                  <NumberInput
+                    value={t.zones[zone].pictogram.gap}
+                    min={0}
+                    suffix="mm"
+                    onChange={(v) => edit('Pictogram', (tpl) => void (tpl.zones[zone].pictogram.gap = v))}
+                  />
+                </Field>
+              </Row>
+              <Field label="Align with the text">
+                <Select
+                  value={t.zones[zone].pictogram.align}
+                  onChange={(v) => edit('Pictogram', (tpl) => void (tpl.zones[zone].pictogram.align = v))}
+                  options={[
+                    { value: 'top', label: 'Top' },
+                    { value: 'middle', label: 'Middle' },
+                    { value: 'bottom', label: 'Bottom' },
+                  ]}
+                />
+              </Field>
+              <Row>
+                <Button variant="ghost" onClick={() => void loadPictogram(zone, edit)}>
+                  {t.zones[zone].pictogram.source ? 'Replace artwork…' : 'Choose artwork…'}
+                </Button>
+                {t.zones[zone].pictogram.source ? (
+                  <Button
+                    variant="danger"
+                    onClick={() => edit('Pictogram', (tpl) => void (tpl.zones[zone].pictogram.source = ''))}
+                  >
+                    Clear
+                  </Button>
+                ) : null}
+              </Row>
+            </>
+          ) : null}
 
           <ul className="item-list">
             {t.zones[zone].items.map((item) => (
@@ -369,6 +457,39 @@ const ZonesPanel = () => {
   )
 }
 
+/** Load a mark for the pictogram slot. */
+const loadPictogram = async (
+  zone: ZoneId,
+  edit: (label: string, mutate: (t: MasterTemplate) => void) => void,
+): Promise<void> => {
+  const { openFiles } = await import('../platform')
+  const files = await openFiles([{ name: 'Artwork', extensions: ['svg', 'png', 'jpg', 'jpeg'] }])
+  const file = files[0]
+  if (!file) return
+
+  const isSvg = file.name.toLowerCase().endsWith('.svg')
+  edit('Pictogram', (tpl) => {
+    const p = tpl.zones[zone].pictogram
+    if (isSvg) {
+      p.source = unwrapSvg(new TextDecoder().decode(file.bytes))
+      p.format = 'svg'
+    } else {
+      p.source = toDataUri(file.name, file.bytes)
+      p.format = 'raster'
+    }
+  })
+}
+
+/** Strip the outer <svg> so artwork nests in the sheet's own viewport. */
+const unwrapSvg = (markup: string): string =>
+  markup.replace(/<\?xml[^>]*\?>/g, '').replace(/^[\s\S]*?<svg[^>]*>|<\/svg>\s*$/g, '')
+
+const toDataUri = (name: string, bytes: Uint8Array): string => {
+  const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('')
+  const mime = name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+  return `data:${mime};base64,${btoa(binary)}`
+}
+
 /** Bring in a logo or an ornament for a band. */
 const importArtwork = async (zone: ZoneId, add: (zone: ZoneId, item: VectorItem) => void) => {
   const { openFiles } = await import('../platform')
@@ -380,14 +501,10 @@ const importArtwork = async (zone: ZoneId, add: (zone: ZoneId, item: VectorItem)
   const item = newItem('image', zone) as Extract<VectorItem, { kind: 'image' }>
 
   if (isSvg) {
-    // Strip the outer <svg> so the artwork nests in the sheet's own viewport.
-    const markup = new TextDecoder().decode(file.bytes)
-    item.source = markup.replace(/<\?xml[^>]*\?>/g, '').replace(/^[\s\S]*?<svg[^>]*>|<\/svg>\s*$/g, '')
+    item.source = unwrapSvg(new TextDecoder().decode(file.bytes))
     item.format = 'svg'
   } else {
-    const binary = Array.from(file.bytes, (b) => String.fromCharCode(b)).join('')
-    const mime = file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
-    item.source = `data:${mime};base64,${btoa(binary)}`
+    item.source = toDataUri(file.name, file.bytes)
     item.format = 'raster'
   }
 
@@ -560,17 +677,14 @@ const TypePanel = () => {
                 <Select
                   value={style.family}
                   onChange={(v) => edit('Font', (tpl) => void (tpl.styles[role.id].family = v))}
-                  options={[
-                    { value: 'plex', label: 'Plex Sans' },
-                    { value: 'plex-condensed', label: 'Plex Condensed' },
-                  ]}
+                  options={FONT_FAMILIES}
                 />
               </Field>
               <Field label="Weight">
                 <Select
                   value={String(style.weight)}
                   onChange={(v) => edit('Weight', (tpl) => void (tpl.styles[role.id].weight = Number(v)))}
-                  options={WEIGHTS}
+                  options={weightsFor(style.family)}
                 />
               </Field>
             </Row>
@@ -773,6 +887,73 @@ const StopPanel = () => {
   )
 }
 
+
+/**
+ * The lines themselves, rather than the sheet they sit on.
+ *
+ * Colour is the one that matters: it comes from the source data where the data
+ * carries it, and agencies routinely publish timetables that do not. Anything
+ * set here belongs to the route across every stop it calls at.
+ */
+const RoutesPanel = () => {
+  const routes = useStore((s) => s.project.timetable.routes)
+  const stops = useStore((s) => s.project.timetable.stops)
+  const timetable = useStore((s) => s.project.timetable)
+  const updateRoute = useStore((s) => s.updateRoute)
+
+  if (routes.length === 0) return <p className="readout">Import a timetable to see its routes.</p>
+
+  return (
+    <>
+      <Group title={`${routes.length} routes`}>
+        <p className="readout">
+          A colour set here is used by that route's badge on every sheet it appears on.
+        </p>
+      </Group>
+
+      {routes.map((route) => {
+        const served = stops.filter((stop) => routesAtStop(timetable, stop.id).some((r) => r.id === route.id))
+        return (
+          <Group key={route.id} title={`${route.number}${route.terminal ? ` — ${route.terminal}` : ''}`}>
+            <Field label="Colour" hint={route.color ? undefined : 'unset — the accent is used instead'}>
+              <ColorInput
+                value={route.color ?? '#1f6feb'}
+                onChange={(v) => updateRoute(route.id, (r) => void (r.color = v))}
+              />
+            </Field>
+            <Field label="Destination">
+              <TextInput
+                value={route.terminal}
+                onChange={(v) => updateRoute(route.id, (r) => void (r.terminal = v))}
+              />
+            </Field>
+            <Field label="Streets" hint="comma separated">
+              <TextInput
+                value={route.via.join(', ')}
+                onChange={(v) =>
+                  updateRoute(route.id, (r) => {
+                    r.via = v
+                      .split(',')
+                      .map((x) => x.trim())
+                      .filter(Boolean)
+                  })
+                }
+              />
+            </Field>
+            <Field label="Note" hint="printed under the block">
+              <TextInput
+                value={route.notes.join(' ')}
+                onChange={(v) => updateRoute(route.id, (r) => void (r.notes = v ? [v] : []))}
+              />
+            </Field>
+            <p className="readout">Calls at {served.length} of {stops.length} stops.</p>
+          </Group>
+        )
+      })}
+    </>
+  )
+}
+
 export const Inspector = ({ page }: { page: Page | null }) => {
   const tab = useStore((s) => s.inspectorTab)
   const setTab = useStore((s) => s.setInspectorTab)
@@ -793,6 +974,7 @@ export const Inspector = ({ page }: { page: Page | null }) => {
         {tab === 'zones' ? <ZonesPanel /> : null}
         {tab === 'type' ? <TypePanel /> : null}
         {tab === 'colour' ? <ColourPanel /> : null}
+        {tab === 'routes' ? <RoutesPanel /> : null}
         {tab === 'rules' ? <RulesPanel /> : null}
         {tab === 'stop' ? <StopPanel /> : null}
       </div>

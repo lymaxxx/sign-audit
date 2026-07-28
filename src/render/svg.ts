@@ -42,8 +42,11 @@ const drawPrimitive = (p: Primitive): string => {
       )
     case 'path': {
       const fill = p.fill ? `fill="${p.fill}"` : 'fill="none"'
-      const stroke = p.stroke ? ` stroke="${p.stroke}" stroke-width="${n(p.strokeWidth ?? 0.2)}"` : ''
-      return `<path d="${p.d}" ${fill}${stroke}/>`
+      const stroke = p.stroke ? ` stroke="${p.stroke}" stroke-width="${n((p.strokeWidth ?? 0.2) / (p.scale || 1))}"` : ''
+      return (
+        `<g transform="translate(${n(p.x)} ${n(p.y)}) scale(${n(p.scale)})">` +
+        `<path d="${p.d}" ${fill}${stroke}/></g>`
+      )
     }
     case 'image': {
       if (p.format === 'svg') {
