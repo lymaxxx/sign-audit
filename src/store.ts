@@ -9,15 +9,24 @@ import type { ImportIssue } from './import/types'
 /**
  * Application state.
  *
- * The timetable and the template are held apart on purpose: importing a fresh
- * season of data replaces the first and leaves the second — and every per-stop
- * edit layered over it — exactly as it was.
+ * The timetable and the templates are held apart on purpose: importing a
+ * fresh season of data replaces the first and leaves the second — and every
+ * per-stop edit layered over it — exactly as it was.
  */
+
+export interface NamedTemplate {
+  id: string
+  name: string
+  template: MasterTemplate
+}
 
 export interface Project {
   name: string
   timetable: Timetable
-  template: MasterTemplate
+  /** Every master template the project knows, at least one. */
+  templates: NamedTemplate[]
+  /** Which one a stop uses when it does not say otherwise. */
+  defaultTemplateId: string
   edits: Record<string, StopEdits>
 }
 
@@ -33,6 +42,26 @@ interface History {
   future: Project[]
 }
 
+const randomId = (prefix: string): string => `${prefix}-${Math.random().toString(36).slice(2, 8)}`
+
+/** The template a stop's sheet is actually built from. */
+export const resolveTemplateId = (project: Project, stopId: string | null): string => {
+  const wanted = stopId ? project.edits[stopId]?.templateId : undefined
+  if (wanted && project.templates.some((t) => t.id === wanted)) return wanted
+  if (project.templates.some((t) => t.id === project.defaultTemplateId)) return project.defaultTemplateId
+  return project.templates[0]!.id
+}
+
+export const resolveTemplate = (project: Project, stopId: string | null): MasterTemplate =>
+  (project.templates.find((t) => t.id === resolveTemplateId(project, stopId)) ?? project.templates[0]!).template
+
+/** The template the Inspector is editing and the canvas is previewing. */
+export const useActiveTemplate = (): MasterTemplate => {
+  const templates = useStore((s) => s.project.templates)
+  const activeId = useStore((s) => s.activeTemplateId)
+  return templates.find((t) => t.id === activeId)?.template ?? templates[0]!.template
+}
+
 export interface AppState {
   project: Project
   selection: Selection
@@ -44,12 +73,18 @@ export interface AppState {
   /** Which of the two lists the left panel shows — stops or the route roster
    *  they are drawn from. */
   sidebarTab: SidebarTab
+  /** The template the Inspector edits and the canvas previews. Follows the
+   *  selected stop's own template automatically; picking a template to edit
+   *  directly in the template library overrides that until the selection
+   *  changes again. */
+  activeTemplateId: string
   busy: string | null
 
   select: (stopId: string) => void
   selectItem: (zone: ZoneId | null, itemId: string | null) => void
   setInspectorTab: (tab: InspectorTab) => void
   setSidebarTab: (tab: SidebarTab) => void
+  setActiveTemplateId: (id: string) => void
   setZoom: (zoom: number | 'fit') => void
   toggleGuides: () => void
   setBusy: (message: string | null) => void
@@ -70,9 +105,23 @@ export interface AppState {
 
   replaceTimetable: (timetable: Timetable, issues: ImportIssue[]) => void
   mergeTimetable: (timetable: Timetable, issues: ImportIssue[]) => void
+  /** Replace the active template's own settings, in place — used when a
+   *  `.algachtpl` file is loaded onto whichever template is being edited. */
   applyTemplate: (template: MasterTemplate) => void
   loadProject: (project: Project) => void
   newProject: () => void
+
+  /** A fresh, unnamed template, made active for editing. Returns its id. */
+  addTemplate: (name: string) => string
+  /** A copy of an existing template, made active for editing. Returns its id. */
+  duplicateTemplate: (id: string) => string
+  renameTemplate: (id: string, name: string) => void
+  /** Refuses to remove the last remaining template. Stops pointed at the
+   *  removed one fall back to the project default. */
+  deleteTemplate: (id: string) => void
+  setDefaultTemplate: (id: string) => void
+  /** Unset to fall back to the project default. */
+  assignStopTemplate: (stopId: string, templateId: string | null) => void
 
   editsFor: (stopId: string) => StopEdits
   updateEdits: (stopId: string, mutate: (edits: StopEdits) => void) => void
@@ -89,6 +138,7 @@ export type InspectorTab =
   | 'type'
   | 'colour'
   | 'rules'
+  | 'templates'
   | 'stop'
 
 export type SidebarTab = 'stops' | 'routes'
@@ -98,7 +148,7 @@ const HISTORY_LIMIT = 60
 /**
  * Snapshot a project for the undo stack.
  *
- * Only the template and the per-stop edits are copied. The timetable is
+ * Only the templates and the per-stop edits are copied. The timetable is
  * replaced wholesale on import and never mutated in place, so it can be shared
  * between every history entry — and it is by far the largest thing here. Deep
  * copying it turned a keystroke in a text field into two clones of a Map
@@ -107,31 +157,31 @@ const HISTORY_LIMIT = 60
 const clone = (project: Project): Project => ({
   name: project.name,
   timetable: project.timetable,
-  template: structuredClone(project.template),
+  templates: project.templates.map((t) => ({ ...t, template: structuredClone(t.template) })),
+  defaultTemplateId: project.defaultTemplateId,
   edits: structuredClone(project.edits),
 })
 
-const demoProject = (): Project => {
-  const timetable = makeDemoTimetable()
+const singleTemplateProject = (name: string, timetable: Timetable): Project => {
+  const id = randomId('template')
   return {
-    name: 'Demo corridor',
+    name,
     timetable,
-    template: createDefaultTemplate(),
+    templates: [{ id, name: 'Default', template: createDefaultTemplate() }],
+    defaultTemplateId: id,
     edits: {},
   }
 }
 
-const blankProject = (): Project => ({
-  name: 'Untitled',
-  timetable: emptyTimetable(),
-  template: createDefaultTemplate(),
-  edits: {},
-})
+const demoProject = (): Project => singleTemplateProject('Demo corridor', makeDemoTimetable())
+const blankProject = (): Project => singleTemplateProject('Untitled', emptyTimetable())
+
+const initialProject = demoProject()
 
 export const useStore = create<AppState>((set, get) => ({
   // Opening onto sample data beats opening onto an empty window: the layout
   // controls mean nothing until there is something laid out.
-  project: demoProject(),
+  project: initialProject,
   selection: { stopId: 's1', zone: null, itemId: null },
   history: { past: [], future: [] },
   issues: [],
@@ -139,12 +189,18 @@ export const useStore = create<AppState>((set, get) => ({
   zoom: 'fit',
   inspectorTab: 'artboard',
   sidebarTab: 'stops',
+  activeTemplateId: resolveTemplateId(initialProject, 's1'),
   busy: null,
 
-  select: (stopId) => set((s) => ({ selection: { ...s.selection, stopId, itemId: null, zone: null } })),
+  select: (stopId) =>
+    set((s) => ({
+      selection: { ...s.selection, stopId, itemId: null, zone: null },
+      activeTemplateId: resolveTemplateId(s.project, stopId),
+    })),
   selectItem: (zone, itemId) => set((s) => ({ selection: { ...s.selection, zone, itemId } })),
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   setSidebarTab: (sidebarTab) => set({ sidebarTab }),
+  setActiveTemplateId: (activeTemplateId) => set({ activeTemplateId }),
   setZoom: (zoom) => set({ zoom }),
   toggleGuides: () => set((s) => ({ showGuides: !s.showGuides })),
   setBusy: (busy) => set({ busy }),
@@ -217,6 +273,7 @@ export const useStore = create<AppState>((set, get) => ({
         project: next,
         issues,
         selection: { stopId, zone: null, itemId: null },
+        activeTemplateId: resolveTemplateId(next, stopId),
         history: { past: [...s.history.past, clone(s.project)].slice(-HISTORY_LIMIT), future: [] },
       }
     }),
@@ -250,23 +307,79 @@ export const useStore = create<AppState>((set, get) => ({
 
   applyTemplate: (template) =>
     get().commit('Apply template', (draft) => {
-      draft.template = template
+      const active = get().activeTemplateId
+      const entry = draft.templates.find((t) => t.id === active)
+      if (entry) entry.template = template
     }),
 
   loadProject: (project) =>
     set({
       project,
       selection: { stopId: project.timetable.stops[0]?.id ?? null, zone: null, itemId: null },
+      activeTemplateId: resolveTemplateId(project, project.timetable.stops[0]?.id ?? null),
       history: { past: [], future: [] },
       issues: [],
     }),
 
-  newProject: () =>
+  newProject: () => {
+    const project = blankProject()
     set({
-      project: blankProject(),
+      project,
       selection: { stopId: null, zone: null, itemId: null },
+      activeTemplateId: project.defaultTemplateId,
       history: { past: [], future: [] },
       issues: [],
+    })
+  },
+
+  addTemplate: (name) => {
+    const id = randomId('template')
+    get().commit('New template', (draft) => {
+      draft.templates.push({ id, name, template: createDefaultTemplate() })
+    })
+    set({ activeTemplateId: id })
+    return id
+  },
+
+  duplicateTemplate: (sourceId) => {
+    const id = randomId('template')
+    get().commit('Duplicate template', (draft) => {
+      const source = draft.templates.find((t) => t.id === sourceId)
+      if (!source) return
+      draft.templates.push({ id, name: `${source.name} copy`, template: structuredClone(source.template) })
+    })
+    set({ activeTemplateId: id })
+    return id
+  },
+
+  renameTemplate: (id, name) =>
+    get().commit('Rename template', (draft) => {
+      const entry = draft.templates.find((t) => t.id === id)
+      if (entry) entry.name = name
+    }),
+
+  deleteTemplate: (id) => {
+    if (get().project.templates.length <= 1) return
+    get().commit('Delete template', (draft) => {
+      draft.templates = draft.templates.filter((t) => t.id !== id)
+      if (draft.defaultTemplateId === id) draft.defaultTemplateId = draft.templates[0]!.id
+      for (const edits of Object.values(draft.edits)) {
+        if (edits.templateId === id) delete edits.templateId
+      }
+    })
+    if (get().activeTemplateId === id) set({ activeTemplateId: get().project.defaultTemplateId })
+  },
+
+  setDefaultTemplate: (id) =>
+    get().commit('Set default template', (draft) => {
+      if (draft.templates.some((t) => t.id === id)) draft.defaultTemplateId = id
+    }),
+
+  assignStopTemplate: (stopId, templateId) =>
+    get().commit('Assign template', (draft) => {
+      draft.edits[stopId] ??= {}
+      if (templateId) draft.edits[stopId]!.templateId = templateId
+      else delete draft.edits[stopId]!.templateId
     }),
 
   editsFor: (stopId) => get().project.edits[stopId] ?? {},
@@ -294,14 +407,17 @@ export const useStore = create<AppState>((set, get) => ({
 
   addZoneItem: (zone, item) =>
     get().commit('Add item', (draft) => {
-      draft.template.zones[zone].items.push(item)
+      const entry = draft.templates.find((t) => t.id === get().activeTemplateId)
+      if (entry) entry.template.zones[zone].items.push(item)
     }),
 
   removeZoneItem: (zone, itemId) =>
     get().commit('Remove item', (draft) => {
-      const z = draft.template.zones[zone]
+      const entry = draft.templates.find((t) => t.id === get().activeTemplateId)
+      if (!entry) return
+      const z = entry.template.zones[zone]
       z.items = z.items.filter((i) => i.id !== itemId)
     }),
 }))
 
-export { demoProject, blankProject }
+export { demoProject, blankProject, singleTemplateProject }

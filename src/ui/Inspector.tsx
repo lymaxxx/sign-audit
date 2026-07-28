@@ -1,4 +1,4 @@
-import { useStore, type InspectorTab } from '../store'
+import { useActiveTemplate, useStore, type InspectorTab } from '../store'
 import { Button, ColorInput, Field, Group, NumberInput, Row, Select, TextInput, Toggle } from './controls'
 import { ARTBOARD_PRESETS } from '../model/defaults'
 import type { MasterTemplate, StyleRole, VectorItem, ZoneId } from '../model/template'
@@ -15,6 +15,7 @@ const TABS: Array<{ id: InspectorTab; label: string }> = [
   { id: 'type', label: 'Type' },
   { id: 'colour', label: 'Colour' },
   { id: 'rules', label: 'Rules' },
+  { id: 'templates', label: 'Templates' },
   { id: 'stop', label: 'This stop' },
 ]
 
@@ -48,14 +49,18 @@ const weightsFor = (family: string) =>
 
 const useTemplateEdit = () => {
   const commit = useStore((s) => s.commit)
+  const activeTemplateId = useStore((s) => s.activeTemplateId)
   return (label: string, mutate: (t: MasterTemplate) => void) =>
-    commit(label, (draft) => mutate(draft.template))
+    commit(label, (draft) => {
+      const entry = draft.templates.find((t) => t.id === activeTemplateId)
+      if (entry) mutate(entry.template)
+    })
 }
 
 /* ------------------------------------------------------------------ panels */
 
 const ArtboardPanel = () => {
-  const t = useStore((s) => s.project.template)
+  const t = useActiveTemplate()
   const edit = useTemplateEdit()
 
   return (
@@ -141,7 +146,7 @@ const ArtboardPanel = () => {
 }
 
 const FlowPanel = ({ page }: { page: Page | null }) => {
-  const t = useStore((s) => s.project.template)
+  const t = useActiveTemplate()
   const edit = useTemplateEdit()
 
   return (
@@ -303,7 +308,7 @@ const newItem = (kind: VectorItem['kind'], zone: ZoneId): VectorItem => {
 }
 
 const ZonesPanel = () => {
-  const t = useStore((s) => s.project.template)
+  const t = useActiveTemplate()
   const edit = useTemplateEdit()
   const selection = useStore((s) => s.selection)
   const selectItem = useStore((s) => s.selectItem)
@@ -639,7 +644,7 @@ const ItemPanel = ({ zone, item }: { zone: ZoneId; item: VectorItem }) => {
 }
 
 const TypePanel = () => {
-  const t = useStore((s) => s.project.template)
+  const t = useActiveTemplate()
   const edit = useTemplateEdit()
 
   return (
@@ -820,7 +825,7 @@ const TypePanel = () => {
 }
 
 const ColourPanel = () => {
-  const t = useStore((s) => s.project.template)
+  const t = useActiveTemplate()
   const edit = useTemplateEdit()
   const slots = [
     ['paper', 'Paper'],
@@ -848,7 +853,7 @@ const ColourPanel = () => {
 }
 
 const RulesPanel = () => {
-  const t = useStore((s) => s.project.template)
+  const t = useActiveTemplate()
   const edit = useTemplateEdit()
 
   return (
@@ -895,12 +900,111 @@ const RulesPanel = () => {
   )
 }
 
+/**
+ * The template library.
+ *
+ * A project can hold more than one master template — different shelter
+ * shapes, different sponsors' artwork — and every stop uses one of them: the
+ * project's default unless it says otherwise. Ticking a stop here is the same
+ * assignment as the picker on "This stop"; both write the one thing.
+ */
+const TemplatesPanel = () => {
+  const templates = useStore((s) => s.project.templates)
+  const defaultTemplateId = useStore((s) => s.project.defaultTemplateId)
+  const activeTemplateId = useStore((s) => s.activeTemplateId)
+  const stops = useStore((s) => s.project.timetable.stops)
+  const edits = useStore((s) => s.project.edits)
+  const setActiveTemplateId = useStore((s) => s.setActiveTemplateId)
+  const addTemplate = useStore((s) => s.addTemplate)
+  const duplicateTemplate = useStore((s) => s.duplicateTemplate)
+  const renameTemplate = useStore((s) => s.renameTemplate)
+  const deleteTemplate = useStore((s) => s.deleteTemplate)
+  const setDefaultTemplate = useStore((s) => s.setDefaultTemplate)
+  const assignStopTemplate = useStore((s) => s.assignStopTemplate)
+
+  return (
+    <>
+      <Group title={`${templates.length} template${templates.length === 1 ? '' : 's'}`}>
+        <p className="readout">
+          Every stop uses the project's default template unless assigned one of its own — a stop with its own
+          template also gets that template's own header and footer artwork.
+        </p>
+        <Button onClick={() => addTemplate('New template')}>+ New template</Button>
+      </Group>
+
+      {templates.map((entry) => {
+        const assignedCount = stops.filter(
+          (s) => (edits[s.id]?.templateId ?? defaultTemplateId) === entry.id,
+        ).length
+        return (
+          <Group key={entry.id} title={entry.name || 'Untitled template'}>
+            <Field label="Name">
+              <TextInput value={entry.name} onChange={(v) => renameTemplate(entry.id, v)} />
+            </Field>
+            <Row>
+              <Button
+                variant={activeTemplateId === entry.id ? 'primary' : 'ghost'}
+                onClick={() => setActiveTemplateId(entry.id)}
+              >
+                {activeTemplateId === entry.id ? 'Editing here' : 'Edit'}
+              </Button>
+              <Button variant="ghost" onClick={() => duplicateTemplate(entry.id)}>
+                Duplicate
+              </Button>
+              <Button variant="danger" disabled={templates.length <= 1} onClick={() => deleteTemplate(entry.id)}>
+                Delete
+              </Button>
+            </Row>
+            <Toggle
+              label="Project default"
+              value={defaultTemplateId === entry.id}
+              onChange={(v) => v && setDefaultTemplate(entry.id)}
+            />
+            <p className="readout">
+              {assignedCount} of {stops.length} stop{stops.length === 1 ? '' : 's'} use this template.
+            </p>
+
+            {stops.length > 0 ? (
+              <details className="template-stop-picker">
+                <summary>Choose stops…</summary>
+                <ul className="check-list">
+                  {stops.map((stop) => {
+                    const usesThis = (edits[stop.id]?.templateId ?? defaultTemplateId) === entry.id
+                    return (
+                      <li key={stop.id}>
+                        <label className="toggle">
+                          <input
+                            type="checkbox"
+                            checked={usesThis}
+                            onChange={(e) => assignStopTemplate(stop.id, e.target.checked ? entry.id : null)}
+                          />
+                          <span>
+                            {stop.name}
+                            {stop.direction ? ` → ${stop.direction}` : ''}
+                          </span>
+                        </label>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </details>
+            ) : null}
+          </Group>
+        )
+      })}
+    </>
+  )
+}
+
 const StopPanel = () => {
   const stopId = useStore((s) => s.selection.stopId)
   const stops = useStore((s) => s.project.timetable.stops)
   const edits = useStore((s) => s.project.edits)
   const updateEdits = useStore((s) => s.updateEdits)
   const timetable = useStore((s) => s.project.timetable)
+  const templates = useStore((s) => s.project.templates)
+  const defaultTemplateId = useStore((s) => s.project.defaultTemplateId)
+  const assignStopTemplate = useStore((s) => s.assignStopTemplate)
 
   const stop = stops.find((s) => s.id === stopId)
   if (!stop || !stopId) return <p className="readout">No stop selected.</p>
@@ -908,6 +1012,7 @@ const StopPanel = () => {
   const current = edits[stopId] ?? {}
   const hidden = new Set(current.hidden ?? [])
   const routes = routesAtStop(timetable, stop.id)
+  const defaultName = templates.find((t) => t.id === defaultTemplateId)?.name ?? 'Default'
 
   return (
     <>
@@ -924,6 +1029,19 @@ const StopPanel = () => {
             value={current.subtitleOverride ?? ''}
             placeholder={stop.direction ?? ''}
             onChange={(v) => updateEdits(stopId, (e) => void (v ? (e.subtitleOverride = v) : delete e.subtitleOverride))}
+          />
+        </Field>
+      </Group>
+
+      <Group title="Template">
+        <Field label="Use" hint="which master template — and which header/footer artwork — this sheet is built from">
+          <Select
+            value={current.templateId ?? ''}
+            onChange={(v) => assignStopTemplate(stopId, v || null)}
+            options={[
+              { value: '', label: `Project default (${defaultName})` },
+              ...templates.map((t) => ({ value: t.id, label: t.name })),
+            ]}
           />
         </Field>
       </Group>
@@ -986,6 +1104,7 @@ export const Inspector = ({ page }: { page: Page | null }) => {
         {tab === 'type' ? <TypePanel /> : null}
         {tab === 'colour' ? <ColourPanel /> : null}
         {tab === 'rules' ? <RulesPanel /> : null}
+        {tab === 'templates' ? <TemplatesPanel /> : null}
         {tab === 'stop' ? <StopPanel /> : null}
       </div>
     </aside>

@@ -607,6 +607,30 @@ select {
   padding: 0;
 }
 
+.template-stop-picker summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.check-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.check-list li {
+  padding: 2px 0;
+}
+
+.check-list .toggle {
+  margin-bottom: 0;
+  font-size: 12px;
+}
+
 .item-list li {
   display: flex;
   align-items: center;

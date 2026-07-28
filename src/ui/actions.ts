@@ -1,7 +1,7 @@
 import { getFontBook } from '../layout/fonts.browser'
 import { renderPdf, formatFilename } from '../render/pdf'
 import { chooseDirectory, openFiles, saveFile, writeInto } from '../platform'
-import { useStore, type Project } from '../store'
+import { useStore, resolveTemplate, type NamedTemplate, type Project } from '../store'
 import { buildPage, todayLabel } from './useSheet'
 import { migrateTemplate } from '../model/migrate'
 import { parseDelimited, parsePastedList } from '../import/csv'
@@ -21,9 +21,10 @@ const encoder = new TextEncoder()
 const serialiseProject = (project: Project) =>
   JSON.stringify(
     {
-      version: 1,
+      version: 2,
       name: project.name,
-      template: project.template,
+      templates: project.templates,
+      defaultTemplateId: project.defaultTemplateId,
       edits: project.edits,
       timetable: {
         routes: project.timetable.routes,
@@ -44,11 +45,26 @@ const deserialiseProject = (text: string): Project => {
     dayTypes: raw.timetable?.dayTypes ?? [],
     departures: new Map(raw.timetable?.departures ?? []),
   }
+
+  // A file saved before templates came in the plural carried one under
+  // `template`; wrap it into a library of one rather than losing it.
+  const templates: NamedTemplate[] = Array.isArray(raw.templates)
+    ? raw.templates.map((t: { id: string; name: string; template: unknown }) => ({
+        id: t.id,
+        name: t.name,
+        template: migrateTemplate(t.template),
+      }))
+    : [{ id: 'default', name: 'Default', template: migrateTemplate(raw.template) }]
+
+  const defaultTemplateId = templates.some((t) => t.id === raw.defaultTemplateId)
+    ? raw.defaultTemplateId
+    : templates[0]!.id
+
   return {
     name: raw.name ?? 'Untitled',
     timetable,
-    // An older file may predate fields the template has since gained.
-    template: migrateTemplate(raw.template),
+    templates,
+    defaultTemplateId,
     edits: raw.edits ?? {},
   }
 }
@@ -69,11 +85,13 @@ export const openProject = async (): Promise<void> => {
   useStore.getState().loadProject(deserialiseProject(new TextDecoder().decode(file.bytes)))
 }
 
+/** The template currently being edited — the one the Inspector shows. */
 export const saveTemplate = async (): Promise<void> => {
-  const { project } = useStore.getState()
+  const { project, activeTemplateId } = useStore.getState()
+  const active = project.templates.find((t) => t.id === activeTemplateId) ?? project.templates[0]!
   await saveFile(
-    `${project.template.name || 'template'}.algachtpl`,
-    encoder.encode(JSON.stringify(project.template, null, 2)),
+    `${active.template.name || active.name || 'template'}.algachtpl`,
+    encoder.encode(JSON.stringify(active.template, null, 2)),
     [{ name: 'Algach template', extensions: ['algachtpl'] }],
     'application/json',
   )
@@ -177,7 +195,7 @@ export const exportCurrent = async (options: ExportOptions): Promise<void> => {
   store.setBusy('Writing PDF…')
   try {
     const book = await getFontBook()
-    const page = buildPage(book, project, selection.stopId)
+    const page = buildPage(book, resolveTemplate(project, selection.stopId), project, selection.stopId)
     if (!page) return
 
     const stop = project.timetable.stops.find((s) => s.id === selection.stopId)!
@@ -227,7 +245,7 @@ export const exportAll = async (
   if (options.singleFile) {
     const pages = []
     for (const [index, stop] of stops.entries()) {
-      const page = buildPage(book, project, stop.id, date)
+      const page = buildPage(book, resolveTemplate(project, stop.id), project, stop.id, date)
       if (!page) continue
       if (page.diagnostics.overflow) overflowing.push(stop.name)
       pages.push(page)
@@ -246,7 +264,7 @@ export const exportAll = async (
   let written = 0
 
   for (const [index, stop] of stops.entries()) {
-    const page = buildPage(book, project, stop.id, date)
+    const page = buildPage(book, resolveTemplate(project, stop.id), project, stop.id, date)
     if (!page) continue
     if (page.diagnostics.overflow) overflowing.push(stop.name)
 

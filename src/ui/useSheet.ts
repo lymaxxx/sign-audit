@@ -3,8 +3,9 @@ import { getFontBook } from '../layout/fonts.browser'
 import { BUNDLED_FONTS, type FontBook } from '../layout/fonts'
 import { cssFamily } from '../render/svg'
 import { layoutSheet, type Page } from '../layout'
+import type { MasterTemplate } from '../model/template'
 import { buildSheetBlocks } from '../model/sheet'
-import { useStore } from '../store'
+import { useStore, resolveTemplate } from '../store'
 import type { Project } from '../store'
 
 /**
@@ -53,9 +54,17 @@ export const useFontFaces = (): void => {
 export const todayLabel = (): string =>
   new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 
-/** Lay out one stop's sheet. Returns null while fonts are still loading. */
+/**
+ * Lay out one stop's sheet, under a given template. Returns null while fonts
+ * are still loading.
+ *
+ * The template is passed in rather than resolved here, so a caller can choose:
+ * the live preview edits one template at a time and previews every stop under
+ * it, while a real export must resolve each stop's own assigned template.
+ */
 export const buildPage = (
   book: FontBook,
+  tpl: MasterTemplate,
   project: Project,
   stopId: string,
   date = todayLabel(),
@@ -64,9 +73,9 @@ export const buildPage = (
   if (!stop) return null
 
   const edits = project.edits[stopId] ?? {}
-  const blocks = buildSheetBlocks(project.timetable, stopId, project.template, edits)
+  const blocks = buildSheetBlocks(project.timetable, stopId, tpl, edits)
 
-  return layoutSheet(book, project.template, {
+  return layoutSheet(book, tpl, {
     stop,
     blocks,
     date,
@@ -76,7 +85,9 @@ export const buildPage = (
 }
 
 /**
- * The sheet for whichever stop is selected.
+ * The sheet for whichever stop is selected, under the template currently
+ * being edited — that is the point of the Inspector, previewing the template
+ * you are working on rather than always the stop's real assignment.
  *
  * Laying out a sheet costs enough to be felt between keystrokes, so it runs at
  * a lower priority than the typing that caused it: the field updates at once
@@ -86,9 +97,11 @@ export const buildPage = (
 export const useCurrentPage = (book: FontBook | null): Page | null => {
   const project = useStore((s) => s.project)
   const stopId = useStore((s) => s.selection.stopId)
+  const activeTemplateId = useStore((s) => s.activeTemplateId)
   const deferred = useDeferredValue(project)
 
-  const { timetable, template, edits } = deferred
+  const { timetable, templates, edits } = deferred
+  const template = templates.find((t) => t.id === activeTemplateId)?.template ?? templates[0]!.template
   const stop = stopId ? timetable.stops.find((s) => s.id === stopId) : undefined
 
   // Segmentation reads only the rules and the row wording. Recomputing it
@@ -116,7 +129,9 @@ export const useCurrentPage = (book: FontBook | null): Page | null => {
 }
 
 /**
- * Which stops the layout could not fit.
+ * Which stops the layout could not fit, under each stop's own assigned
+ * template — this drives the sidebar's overflow flags and the batch-export
+ * report, both of which are about what a stop will really print as.
  *
  * Checked across the whole network, because a template change that rescues one
  * stop can break another, and finding that out at export time is too late.
@@ -139,7 +154,7 @@ export const useOverflowingStops = (book: FontBook | null): Set<string> => {
       const found = new Set<string>()
       for (const stop of project.timetable.stops) {
         if (cancelled) return
-        const page = buildPage(book, project, stop.id)
+        const page = buildPage(book, resolveTemplate(project, stop.id), project, stop.id)
         if (page?.diagnostics.overflow) found.add(stop.id)
       }
       if (!cancelled) setFlagged(found)

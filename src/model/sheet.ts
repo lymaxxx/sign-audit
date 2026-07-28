@@ -21,6 +21,10 @@ export interface StopEdits {
   sectionOverrides?: Record<string, AlignedSections>
   /** Replace departures outright, keyed the same way. */
   timeEdits?: Record<string, number[]>
+  /** Which named template this stop's sheet is generated from. Unset means
+   *  the project's default — this is also how a stop gets its own header and
+   *  footer artwork, since that lives on the template. */
+  templateId?: string
 }
 
 export const editKey = (routeId: string, dayTypeId: string): string => `${routeId} ${dayTypeId}`

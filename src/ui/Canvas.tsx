@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Page } from '../layout'
 import { resolveItemRect, zoneRect } from '../layout'
 import { renderGuides, renderSvg } from '../render/svg'
-import { useStore } from '../store'
+import { useActiveTemplate, useStore } from '../store'
 import type { VectorItem, ZoneId } from '../model/template'
 
 /**
@@ -25,7 +25,8 @@ interface DragState {
 }
 
 export const Canvas = ({ page }: { page: Page | null }) => {
-  const template = useStore((s) => s.project.template)
+  const template = useActiveTemplate()
+  const activeTemplateId = useStore((s) => s.activeTemplateId)
   const showGuides = useStore((s) => s.showGuides)
   const zoom = useStore((s) => s.zoom)
   const setZoom = useStore((s) => s.setZoom)
@@ -117,7 +118,8 @@ export const Canvas = ({ page }: { page: Page | null }) => {
       const round = (v: number) => (event.altKey ? Math.round(v * 10) / 10 : Math.round(v))
 
       touch((draft) => {
-        const item = draft.template.zones[drag.zone].items.find((i) => i.id === drag.itemId)
+        const entry = draft.templates.find((t) => t.id === activeTemplateId)
+        const item = entry?.template.zones[drag.zone].items.find((i) => i.id === drag.itemId)
         if (!item) return
 
         if (drag.mode === 'move') {
@@ -130,7 +132,7 @@ export const Canvas = ({ page }: { page: Page | null }) => {
         }
       })
     },
-    [pxPerMm, touch],
+    [pxPerMm, touch, activeTemplateId],
   )
 
   const endDrag = useCallback(() => {
