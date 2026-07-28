@@ -74,9 +74,11 @@ const fillWindow = (times: Minutes[], window: Window, rules: SegmentRules): Sect
   // Generous: the consensus already found a rhythm here, so this only catches
   // a column that genuinely does not share it. The ratio test is the one that
   // matters — "every 5-25 minutes" tells a passenger nothing, however tidy the
-  // arithmetic behind it. Holes where a trip was not run are read as such and
-  // kept out of both the range and the judgement.
-  const brokenBadly = reading.broken > 0 || !reading.steady || reading.missing > reading.regular.length / 3
+  // arithmetic behind it. A gap that reads as one or more skipped trips is not
+  // held against the column, same as in a single day's own reading — a column
+  // running the consensus rhythm at half its frequency for a stretch is still
+  // that rhythm. What sinks it is gaps that fit no multiple of it at all.
+  const brokenBadly = !reading.steady || reading.broken > (reading.regular.length + reading.missing) / 2
   if (brokenBadly || max > min * rules.maxHeadwayRatio || reading.median > rules.maxHeadwayForInterval) {
     return classifyIrregular(times, rules)
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { segmentDay } from './index'
+import { segmentDay, segmentDayTypes } from './index'
 import { defaultRules } from '../model/defaults'
 import { parseTimeList } from '../model/time'
 import type { SegmentRules } from '../model/template'
@@ -183,5 +183,38 @@ describe('real timetables are not tidy', () => {
     const interval = sections.find((s) => s.kind === 'interval')
     expect(interval).toBeDefined()
     if (interval?.kind === 'interval') expect(interval.min).toBe(60)
+  })
+})
+
+describe('segmenting several kinds of day together', () => {
+  // A weekday alternating 15/30 (a couple of 15-minute slots dropped through
+  // the day) beside a sparser, less regular weekend — the shape that showed
+  // up as a raw hourly grid next to the weekend's own correctly-read headway,
+  // because the shared-window reading used a stricter, stale copy of the
+  // single-day broken-gap guard.
+  const weekday = parseTimeList(
+    '07:23 07:48 ' +
+      '08:03 08:18 08:48 09:18 09:48 ' +
+      '10:17 10:32 10:47 11:17 11:32 11:47 12:17 12:32 12:47 13:17 13:32 13:47 14:17 14:32 14:47 ' +
+      '15:18 15:33 15:48 16:18 16:33 16:48 17:18 17:33 17:48 18:18 18:48 19:18 19:48 ' +
+      '20:07 20:32 21:02',
+  )
+  const weekend = parseTimeList(
+    '08:48 09:10 09:35 10:00 10:28 10:50 11:15 11:40 12:05 12:30 12:58 13:20 13:48 14:12 14:40 ' +
+      '15:05 15:30 15:58 16:20 16:48 17:10 17:38 18:02 18:30 18:55 19:20 19:48 20:10 20:38 21:02',
+  )
+
+  it('reads a weekday with a couple of dropped slots as the same headway as the weekend', () => {
+    const [wd, we] = segmentDayTypes([weekday, weekend], rules())
+    expect(wd!.some((s) => s?.kind === 'interval')).toBe(true)
+    expect(wd!.some((s) => s?.kind === 'hourly')).toBe(false)
+    expect(we!.some((s) => s?.kind === 'interval')).toBe(true)
+  })
+
+  it('lines up the interval row across both kinds of day', () => {
+    const [wd, we] = segmentDayTypes([weekday, weekend], rules())
+    const intervalRow = wd!.findIndex((s) => s?.kind === 'interval')
+    expect(intervalRow).toBeGreaterThanOrEqual(0)
+    expect(we![intervalRow]?.kind).toBe('interval')
   })
 })
