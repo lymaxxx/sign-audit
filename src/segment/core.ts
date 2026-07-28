@@ -124,7 +124,20 @@ export interface HeadwayReading {
 export const readHeadways = (gaps: number[], rules: SegmentRules): HeadwayReading => {
   if (gaps.length === 0) return { regular: [], missing: 0, broken: 0, median: 0, steady: false }
 
-  const mid = median(gaps)
+  // A run mixes single headways with the odd double or triple where a trip did
+  // not run, and the raw median is pulled toward whichever of those two
+  // populations happens to be larger — on a clean 15-minute service that is
+  // half 15s and half 30s, the median can land anywhere between them. Dividing
+  // each gap by its best-fit multiple against that rough figure collapses the
+  // skips back onto the base rhythm before the median is taken again, so the
+  // second figure is the rhythm itself rather than an artefact of the mixture.
+  const roughMid = median(gaps)
+  const normalised = gaps.map((g) => {
+    if (roughMid <= 0) return g
+    const k = Math.max(1, Math.min(4, Math.round(g / roughMid)))
+    return g / k
+  })
+  const mid = median(normalised)
   const allowed = Math.max(rules.headwayTolerance, mid * rules.headwayToleranceRatio)
 
   const regular: number[] = []
@@ -152,16 +165,30 @@ export const readHeadways = (gaps: number[], rules: SegmentRules): HeadwayReadin
   return { regular, missing, broken, median: mid, steady }
 }
 
+/**
+ * How many departures a stretch needs before quoting a headway beats listing it.
+ *
+ * The rhythm has to survive having its first and last departures shown beside
+ * it. Six night trips minus two at each end leaves a single gap, and "every
+ * 50-60 minutes" over one gap is a worse answer than the six times themselves.
+ */
+export const tripsNeededForInterval = (rules: SegmentRules): number =>
+  rules.minTripsForInterval + Math.max(1, rules.firstTripsCount) + Math.max(1, rules.lastTripsCount)
+
 /** Does this run read as regular service rather than a handful of departures? */
 const qualifiesAsInterval = (run: Run, times: Minutes[], rules: SegmentRules): boolean => {
   const tripCount = run.reach - run.start + 1
-  if (tripCount < rules.minTripsForInterval) return false
+  if (tripCount < tripsNeededForInterval(rules)) return false
   if (run.headways.length === 0) return false
 
   const reading = readHeadways(run.headways, rules)
   if (reading.regular.length === 0 || !reading.steady) return false
-  // A stray hole is tolerable; a run that is mostly holes is not a headway.
-  if (reading.missing > reading.regular.length / 3) return false
+  // A gap that reads as one or more skipped trips — an exact multiple of the
+  // rhythm — is not held against the run: a peak-hour service that drops to
+  // half its frequency for a few hours is the same headway running less
+  // often, not a different one. What sinks a run is gaps that fit no multiple
+  // at all, and those have to stay a small minority.
+  if (reading.broken > (reading.regular.length + reading.missing) / 2) return false
 
   // Judged on the median rather than the mean, so one long gap cannot drag a
   // clear 30-minute service past the threshold that admits it.

@@ -263,6 +263,73 @@ select {
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
 }
 
+.sidebar-tabs {
+  padding-top: 4px;
+}
+
+.route-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.route-card {
+  border-radius: var(--radius);
+}
+
+.route-card summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.route-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.route-card:hover summary {
+  background: #f4f4f5;
+  border-radius: var(--radius);
+}
+
+/* The number is what a finger or an eye hunts for while scrolling a long
+   roster, so it is set well above the rest of the panel's type. */
+.route-card-number {
+  flex: 0 0 auto;
+  min-width: 28px;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #d4d4d8;
+  color: #fff;
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1.2;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
+.route-card-dest {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.route-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 8px 12px;
+}
+
 .dot,
 .flag {
   width: 6px;

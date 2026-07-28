@@ -1,6 +1,6 @@
 import { cleanTimes, floorHour, type Minutes } from '../model/time'
 import type { SegmentRules } from '../model/template'
-import { readHeadways, segmentDayCore, type Section } from './core'
+import { readHeadways, segmentDayCore, tripsNeededForInterval, type Section } from './core'
 
 /**
  * Segmenting every kind of day together, rather than one at a time.
@@ -60,7 +60,7 @@ const headwaysOf = (times: Minutes[]): number[] => {
  * still lines up, it just says something different in that column.
  */
 const fillWindow = (times: Minutes[], window: Window, rules: SegmentRules): Section => {
-  if (times.length < rules.minTripsForInterval) return classifyIrregular(times, rules)
+  if (times.length < tripsNeededForInterval(rules)) return classifyIrregular(times, rules)
 
   const gaps = headwaysOf(times)
   if (gaps.length === 0) return classifyIrregular(times, rules)
@@ -99,9 +99,11 @@ const splitOff = (
   section: Section,
   edge: 'first' | 'last',
   count: number,
+  keep: number,
 ): { anchor: Section; remainder: Section } | null => {
-  if (section.kind !== 'interval' || section.times.length < 2) return null
-  const take = Math.min(count, section.times.length - 1)
+  if (section.kind !== 'interval') return null
+  // Never take so many that the headway stops being one.
+  const take = Math.min(count, section.times.length - keep)
   if (take < 1) return null
 
   const taken = edge === 'first' ? section.times.slice(0, take) : section.times.slice(-take)
@@ -156,7 +158,7 @@ const anchorIntervals = (columns: AlignedSections[], rules: SegmentRules): Align
       if (sections[slotIndex]) return
 
       const wanted = Math.max(1, edge === 'first' ? rules.firstTripsCount : rules.lastTripsCount)
-      const split = splitOff(section, edge, wanted)
+      const split = splitOff(section, edge, wanted, rules.minTripsForInterval)
       if (!split) return
 
       sections[intervalIndex] = split.remainder

@@ -219,12 +219,21 @@ export const layoutZone = (
   box: Rect,
   tokens: TokenValues,
   which: 'header' | 'footer',
+  artboard: { width: number; height: number; bleed: number },
 ): Primitive[] => {
   if (zone.height <= 0) return []
   const out: Primitive[] = []
 
   if (zone.background !== 'none') {
-    out.push({ type: 'rect', x: box.x, y: box.y, w: box.w, h: box.h, fill: colorOf(ctx, zone.background) })
+    // The fill reads as a printed band, not a box drawn inside the margins: it
+    // runs edge to edge and out to the outer side of its zone (up for a
+    // header, down for a footer), swallowing the page margin and the bleed
+    // rather than stopping at them. The side facing the content keeps the
+    // zone's own edge, since that is the boundary the flow measures against.
+    const bleed = artboard.bleed
+    const outerY = which === 'header' ? -bleed : box.y
+    const outerH = which === 'header' ? box.y + box.h + bleed : artboard.height - box.y + bleed
+    out.push({ type: 'rect', x: -bleed, y: outerY, w: artboard.width + bleed * 2, h: outerH, fill: colorOf(ctx, zone.background) })
   }
 
   const p = zone.padding

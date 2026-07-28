@@ -17,7 +17,18 @@ export interface Route {
   accessible?: boolean
   /** Free-form remarks printed beneath the block. */
   notes: string[]
+  /** Overrides what prints on the badge and in the title's route list, without
+   *  touching `number` — which is still what data and edits key off of. */
+  displayLabel?: string
+  /** Runs on its own schedule nobody would think to look for beside the day
+   *  network, so its block is pulled out of the grid and listed on its own
+   *  along the foot of the sheet instead. */
+  isNightRoute?: boolean
 }
+
+/** What actually prints on a route's badge: a display override where one is
+ *  set, the raw number otherwise. */
+export const routeLabel = (route: Route): string => route.displayLabel?.trim() || route.number
 
 /**
  * One side of one stop.

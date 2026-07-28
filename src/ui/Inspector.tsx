@@ -2,7 +2,7 @@ import { useStore, type InspectorTab } from '../store'
 import { Button, ColorInput, Field, Group, NumberInput, Row, Select, TextInput, Toggle } from './controls'
 import { ARTBOARD_PRESETS } from '../model/defaults'
 import type { MasterTemplate, StyleRole, VectorItem, ZoneId } from '../model/template'
-import { routesAtStop } from '../model/types'
+import { routeLabel, routesAtStop } from '../model/types'
 import { BUNDLED_FONTS, FAMILY_LABELS } from '../layout/fonts'
 import type { Page } from '../layout'
 
@@ -14,7 +14,6 @@ const TABS: Array<{ id: InspectorTab; label: string }> = [
   { id: 'zones', label: 'Header & footer' },
   { id: 'type', label: 'Type' },
   { id: 'colour', label: 'Colour' },
-  { id: 'routes', label: 'Routes' },
   { id: 'rules', label: 'Rules' },
   { id: 'stop', label: 'This stop' },
 ]
@@ -666,6 +665,22 @@ const TypePanel = () => {
             <TextInput value={t.block.intervalUnit} onChange={(v) => edit('Unit', (tpl) => void (tpl.block.intervalUnit = v))} />
           </Field>
         </Row>
+        <Row>
+          <Field label="Average headway within" hint="A range this narrow prints as one figure">
+            <NumberInput
+              value={t.block.intervalAverageThreshold}
+              min={0}
+              suffix="min"
+              onChange={(v) => edit('Rules', (tpl) => void (tpl.block.intervalAverageThreshold = v))}
+            />
+          </Field>
+          <Field label="Average prefix">
+            <TextInput
+              value={t.block.intervalAveragePrefix}
+              onChange={(v) => edit('Unit', (tpl) => void (tpl.block.intervalAveragePrefix = v))}
+            />
+          </Field>
+        </Row>
       </Group>
 
       {STYLE_ROLES.map((role) => {
@@ -855,7 +870,7 @@ const StopPanel = () => {
         {routes.map((route) => (
           <Toggle
             key={route.id}
-            label={`${route.number} — ${route.terminal || 'no destination'}`}
+            label={`${routeLabel(route)} — ${route.terminal || 'no destination'}`}
             value={!hidden.has(route.id)}
             onChange={(show) =>
               updateEdits(stopId, (e) => {
@@ -888,72 +903,6 @@ const StopPanel = () => {
 }
 
 
-/**
- * The lines themselves, rather than the sheet they sit on.
- *
- * Colour is the one that matters: it comes from the source data where the data
- * carries it, and agencies routinely publish timetables that do not. Anything
- * set here belongs to the route across every stop it calls at.
- */
-const RoutesPanel = () => {
-  const routes = useStore((s) => s.project.timetable.routes)
-  const stops = useStore((s) => s.project.timetable.stops)
-  const timetable = useStore((s) => s.project.timetable)
-  const updateRoute = useStore((s) => s.updateRoute)
-
-  if (routes.length === 0) return <p className="readout">Import a timetable to see its routes.</p>
-
-  return (
-    <>
-      <Group title={`${routes.length} routes`}>
-        <p className="readout">
-          A colour set here is used by that route's badge on every sheet it appears on.
-        </p>
-      </Group>
-
-      {routes.map((route) => {
-        const served = stops.filter((stop) => routesAtStop(timetable, stop.id).some((r) => r.id === route.id))
-        return (
-          <Group key={route.id} title={`${route.number}${route.terminal ? ` — ${route.terminal}` : ''}`}>
-            <Field label="Colour" hint={route.color ? undefined : 'unset — the accent is used instead'}>
-              <ColorInput
-                value={route.color ?? '#1f6feb'}
-                onChange={(v) => updateRoute(route.id, (r) => void (r.color = v))}
-              />
-            </Field>
-            <Field label="Destination">
-              <TextInput
-                value={route.terminal}
-                onChange={(v) => updateRoute(route.id, (r) => void (r.terminal = v))}
-              />
-            </Field>
-            <Field label="Streets" hint="comma separated">
-              <TextInput
-                value={route.via.join(', ')}
-                onChange={(v) =>
-                  updateRoute(route.id, (r) => {
-                    r.via = v
-                      .split(',')
-                      .map((x) => x.trim())
-                      .filter(Boolean)
-                  })
-                }
-              />
-            </Field>
-            <Field label="Note" hint="printed under the block">
-              <TextInput
-                value={route.notes.join(' ')}
-                onChange={(v) => updateRoute(route.id, (r) => void (r.notes = v ? [v] : []))}
-              />
-            </Field>
-            <p className="readout">Calls at {served.length} of {stops.length} stops.</p>
-          </Group>
-        )
-      })}
-    </>
-  )
-}
-
 export const Inspector = ({ page }: { page: Page | null }) => {
   const tab = useStore((s) => s.inspectorTab)
   const setTab = useStore((s) => s.setInspectorTab)
@@ -974,7 +923,6 @@ export const Inspector = ({ page }: { page: Page | null }) => {
         {tab === 'zones' ? <ZonesPanel /> : null}
         {tab === 'type' ? <TypePanel /> : null}
         {tab === 'colour' ? <ColourPanel /> : null}
-        {tab === 'routes' ? <RoutesPanel /> : null}
         {tab === 'rules' ? <RulesPanel /> : null}
         {tab === 'stop' ? <StopPanel /> : null}
       </div>

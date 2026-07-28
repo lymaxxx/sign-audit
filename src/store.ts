@@ -41,11 +41,15 @@ export interface AppState {
   showGuides: boolean
   zoom: number | 'fit'
   inspectorTab: InspectorTab
+  /** Which of the two lists the left panel shows — stops or the route roster
+   *  they are drawn from. */
+  sidebarTab: SidebarTab
   busy: string | null
 
   select: (stopId: string) => void
   selectItem: (zone: ZoneId | null, itemId: string | null) => void
   setInspectorTab: (tab: InspectorTab) => void
+  setSidebarTab: (tab: SidebarTab) => void
   setZoom: (zoom: number | 'fit') => void
   toggleGuides: () => void
   setBusy: (message: string | null) => void
@@ -84,9 +88,10 @@ export type InspectorTab =
   | 'zones'
   | 'type'
   | 'colour'
-  | 'routes'
   | 'rules'
   | 'stop'
+
+export type SidebarTab = 'stops' | 'routes'
 
 const HISTORY_LIMIT = 60
 
@@ -133,11 +138,13 @@ export const useStore = create<AppState>((set, get) => ({
   showGuides: false,
   zoom: 'fit',
   inspectorTab: 'artboard',
+  sidebarTab: 'stops',
   busy: null,
 
   select: (stopId) => set((s) => ({ selection: { ...s.selection, stopId, itemId: null, zone: null } })),
   selectItem: (zone, itemId) => set((s) => ({ selection: { ...s.selection, zone, itemId } })),
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
+  setSidebarTab: (sidebarTab) => set({ sidebarTab }),
   setZoom: (zoom) => set({ zoom }),
   toggleGuides: () => set((s) => ({ showGuides: !s.showGuides })),
   setBusy: (busy) => set({ busy }),

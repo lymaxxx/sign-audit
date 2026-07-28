@@ -120,9 +120,12 @@ export const defaultBlock = (): BlockConfig => ({
     window: '{from}–{to}',
     times: 'Departures',
     hourly: 'Departures',
+    nightRoutes: 'Night routes',
   },
   intervalUnit: 'minutes',
   intervalSeparator: '–',
+  intervalAverageThreshold: 5,
+  intervalAveragePrefix: '~',
 })
 
 export const defaultTitle = (): TitleConfig => ({

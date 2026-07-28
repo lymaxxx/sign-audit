@@ -3,7 +3,7 @@ import { buildSheetBlocks } from './sheet'
 import { createDefaultTemplate } from './defaults'
 import { parseDelimited } from '../import/csv'
 import { guessMapping, importTable } from '../import/table'
-import { routesAtStop } from './types'
+import { routeLabel, routesAtStop } from './types'
 
 const from = (csv: string) => {
   const table = parseDelimited(csv)
@@ -137,5 +137,23 @@ describe('one shelter, two directions', () => {
     for (const stop of timetable.stops) {
       expect(routesAtStop(timetable, stop.id)).toHaveLength(1)
     }
+  })
+})
+
+describe('routeLabel', () => {
+  it('prints the raw number when nothing overrides it', () => {
+    expect(routeLabel({ id: 'r1', number: '8', mode: '', terminal: '', via: [], notes: [] })).toBe('8')
+  })
+
+  it('prints the override instead, once it is set', () => {
+    expect(
+      routeLabel({ id: 'r1', number: '8', mode: '', terminal: '', via: [], notes: [], displayLabel: 'N8' }),
+    ).toBe('N8')
+  })
+
+  it('falls back to the number when the override is blank', () => {
+    expect(
+      routeLabel({ id: 'r1', number: '8', mode: '', terminal: '', via: [], notes: [], displayLabel: '   ' }),
+    ).toBe('8')
   })
 })

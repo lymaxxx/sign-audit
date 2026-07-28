@@ -3,13 +3,12 @@ import { renderPdf, formatFilename } from '../render/pdf'
 import { chooseDirectory, openFiles, saveFile, writeInto } from '../platform'
 import { useStore, type Project } from '../store'
 import { buildPage, todayLabel } from './useSheet'
-import { createDefaultTemplate } from '../model/defaults'
+import { migrateTemplate } from '../model/migrate'
 import { parseDelimited, parsePastedList } from '../import/csv'
 import { parseWorkbook } from '../import/xlsx'
 import { guessMapping, importTable } from '../import/table'
 import { importGtfs } from '../import/gtfs'
 import type { ImportResult } from '../import/types'
-import type { MasterTemplate } from '../model/template'
 import type { Timetable } from '../model/types'
 
 /** Everything the menus and toolbar do. Kept out of the components. */
@@ -49,7 +48,7 @@ const deserialiseProject = (text: string): Project => {
     name: raw.name ?? 'Untitled',
     timetable,
     // An older file may predate fields the template has since gained.
-    template: { ...createDefaultTemplate(), ...(raw.template ?? {}) },
+    template: migrateTemplate(raw.template),
     edits: raw.edits ?? {},
   }
 }
@@ -83,8 +82,8 @@ export const saveTemplate = async (): Promise<void> => {
 export const openTemplate = async (): Promise<void> => {
   const [file] = await openFiles([{ name: 'Algach template', extensions: ['algachtpl'] }])
   if (!file) return
-  const loaded = JSON.parse(new TextDecoder().decode(file.bytes)) as Partial<MasterTemplate>
-  useStore.getState().applyTemplate({ ...createDefaultTemplate(), ...loaded })
+  const loaded = JSON.parse(new TextDecoder().decode(file.bytes))
+  useStore.getState().applyTemplate(migrateTemplate(loaded))
 }
 
 /* ------------------------------------------------------------------ import */

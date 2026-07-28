@@ -3,7 +3,7 @@ import { wrapText } from './fonts'
 import type { Primitive, TextPrimitive } from './primitives'
 import type { BlockRow } from './rows'
 import type { Section } from '../segment'
-import type { DayType, Route } from '../model/types'
+import { routeLabel, type DayType, type Route } from '../model/types'
 import { formatHour, formatMinute, formatTime, hourOf, type Minutes } from '../model/time'
 import { REFERENCE_BLOCK_WIDTH, resolveColor, type MasterTemplate, type StyleRole } from '../model/template'
 
@@ -219,8 +219,17 @@ const hourlyCell = (ctx: LayoutContext, times: Minutes[], x: number, y: number, 
 /** A headway: one large figure, with its unit beneath. */
 const intervalCell = (ctx: LayoutContext, section: Section, x: number, y: number, _w: number): Box => {
   if (section.kind !== 'interval') return EMPTY
-  const sep = ctx.tpl.block.intervalSeparator
-  const value = section.min === section.max ? `${section.min}` : `${section.min}${sep}${section.max}`
+  const { intervalSeparator: sep, intervalAverageThreshold, intervalAveragePrefix } = ctx.tpl.block
+  const spread = section.max - section.min
+  // A couple of minutes either way is not worth making a rider subtract: a
+  // tight range reads as one averaged figure, and only a genuinely wide one
+  // is printed as the range it actually is.
+  const value =
+    section.min === section.max
+      ? `${section.min}`
+      : spread <= intervalAverageThreshold
+        ? `${intervalAveragePrefix}${Math.round((section.min + section.max) / 2)}`
+        : `${section.min}${sep}${section.max}`
 
   const valueLine = lineMetrics(ctx, 'intervalValue')
   const unitLine = lineMetrics(ctx, 'intervalUnit')
@@ -308,14 +317,15 @@ const routeHeader = (ctx: LayoutContext, route: Route, x: number, y: number, w: 
     const numberColor = badge.inkOnPaper || !badgeFill ? colorOf(ctx, numberStyle.color) : ctx.tpl.palette.paper
     const numberSize = ctx.book.sizeMm(numberStyle, ctx.scale)
     const font = ctx.book.resolveStyle(numberStyle)
-    const numberWidth = ctx.book.measure(route.number, numberStyle, ctx.scale)
+    const label = routeLabel(route)
+    const numberWidth = ctx.book.measure(label, numberStyle, ctx.scale)
     // Optically centre the numeral on the cap height rather than the em box.
     const capCentre = top + badgeH / 2 + (numberSize * font.ascent) / 2 - numberSize * 0.09
     prims.push({
       type: 'text',
       x: x + badgeW / 2 - numberWidth / 2,
       y: capCentre,
-      text: route.number,
+      text: label,
       family: font.family,
       weight: font.weight,
       italic: font.italic,

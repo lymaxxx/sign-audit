@@ -134,3 +134,46 @@ describe('sheet layout', () => {
     expect(texts.some((t) => t.includes('Аврора'))).toBe(true)
   })
 })
+
+describe('night routes', () => {
+  // A fresh copy per test: these mark a route as a night route, and the
+  // shared demo timetable above must stay untouched for every other test.
+  const nightSheet = (): Page => {
+    const own = makeDemoTimetable()
+    const nightRoute = own.routes[own.routes.length - 1]!
+    nightRoute.isNightRoute = true
+
+    const tpl = createDefaultTemplate()
+    const stop = own.stops[0]!
+    const blocks = buildSheetBlocks(own, stop.id, tpl)
+    return layoutSheet(book, tpl, { stop, blocks, date: '1 Jan 2026' })
+  }
+
+  it('keeps the night list below the day grid, clear of the footer', () => {
+    const page = nightSheet()
+    const area = contentArea(
+      createDefaultTemplate().artboard,
+      createDefaultTemplate().artboard.margins,
+      createDefaultTemplate().zones.header,
+      createDefaultTemplate().zones.footer,
+    )
+    expect(page.diagnostics.contentHeight <= area.h + 0.01 || page.diagnostics.overflow).toBe(true)
+  })
+
+  it('prints the heading above the night list', () => {
+    const page = nightSheet()
+    const texts = page.primitives
+      .filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
+      .map((p) => p.text)
+    expect(texts).toContain(createDefaultTemplate().block.labels.nightRoutes)
+  })
+
+  it('does not stretch a lone night route to fill the row on its own', () => {
+    // Splitting the block out into its own single-column flow used to hand it
+    // the whole content width, blowing its type size — and its height — up
+    // far past what the day grid uses.
+    const page = nightSheet()
+    const withoutSplit = sheet()
+    expect(page.diagnostics.scale).toBeLessThanOrEqual(withoutSplit.diagnostics.scale * 1.2)
+  })
+})

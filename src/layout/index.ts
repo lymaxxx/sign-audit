@@ -1,10 +1,11 @@
 import type { FontBook } from './fonts'
-import { colorOf, type LayoutContext, type RouteBlockInput } from './block'
-import { computeFlow, fitContent } from './flow'
+import { colorOf, s, styleOf, text, type Box, type LayoutContext, type RouteBlockInput } from './block'
+import { computeFlow, fitContent, layoutContent, type FlowGeometry } from './flow'
 import { contentArea, layoutZone, substituteTokens, zoneRect, type TokenValues } from './zones'
 import type { Page, Primitive } from './primitives'
+import type { Rect } from '../model/units'
 import type { MasterTemplate } from '../model/template'
-import type { Stop } from '../model/types'
+import { routeLabel, type Stop } from '../model/types'
 
 export * from './primitives'
 export { computeFlow, balanceColumns, fitContent, columnsFor } from './flow'
@@ -27,7 +28,7 @@ export interface SheetInput {
 
 const buildTokens = (input: SheetInput, tpl: MasterTemplate): TokenValues => {
   const terminals = [...new Set(input.blocks.map((b) => b.route.terminal).filter(Boolean))]
-  const numbers = input.blocks.map((b) => b.route.number)
+  const numbers = input.blocks.map((b) => routeLabel(b.route))
 
   const base: TokenValues = {
     stop: input.stop.name,
@@ -74,6 +75,133 @@ const cropMarks = (width: number, height: number, bleed: number): Primitive[] =>
   ]
 }
 
+/** A rule and a label above the night list, so it reads as its own section
+ *  rather than a stray gap at the foot of the day network's grid. */
+const nightHeading = (ctx: LayoutContext, box: Rect): Box => {
+  const rule = ctx.tpl.block.sectionRule
+  const label = ctx.tpl.block.labels.nightRoutes
+  const prims: Primitive[] = []
+  let top = box.y
+
+  if (rule.show) {
+    prims.push({
+      type: 'line',
+      x1: box.x,
+      y1: top,
+      x2: box.x + box.w,
+      y2: top,
+      color: colorOf(ctx, rule.color),
+      width: s(ctx, rule.thickness),
+    })
+    top += s(ctx, 2)
+  }
+
+  if (!label.trim()) return { height: top - box.y, prims }
+
+  const style = styleOf(ctx, 'rowLabel')
+  const lineH = ctx.book.lineHeight(style, ctx.scale)
+  const baseline = ctx.book.baselineOffset(style, ctx.scale)
+  prims.push(...text(ctx, label, 'rowLabel', box.x, top + baseline))
+  return { height: top - box.y + lineH, prims }
+}
+
+interface BlocksResult {
+  prims: Primitive[]
+  height: number
+  columns: number
+  rows: number
+  fitScale: number
+  overflow: boolean
+  /** Nominal block scale before the fit shrink, for the "type at N%" readout. */
+  blockScale: number
+}
+
+/**
+ * Flow the day network's blocks into the content area, and — where the route
+ * list has any — run night routes as their own list along the foot of it.
+ *
+ * A night line has nothing in common with the daytime service it would
+ * otherwise be interleaved with in one grid, so it is laid out as a separate
+ * flow beneath it. Both share one auto-fit search, so the day grid and the
+ * night list shrink together rather than one holding a size the other cannot
+ * afford.
+ */
+const layoutBlocks = (ctx: LayoutContext, blocks: RouteBlockInput[], area: Rect): BlocksResult => {
+  const dayBlocks = blocks.filter((b) => !b.route.isNightRoute)
+  const nightBlocks = blocks.filter((b) => b.route.isNightRoute)
+
+  if (nightBlocks.length === 0) {
+    const geometry = computeFlow(ctx.tpl, area.w, dayBlocks.length)
+    return { ...fitContent(ctx, dayBlocks, area, geometry), blockScale: geometry.blockScale }
+  }
+  if (dayBlocks.length === 0) {
+    // Nothing to split from: the night list is the whole sheet, sized the way
+    // a day-only sheet would be.
+    const geometry = computeFlow(ctx.tpl, area.w, nightBlocks.length)
+    return { ...fitContent(ctx, nightBlocks, area, geometry), blockScale: geometry.blockScale }
+  }
+
+  const dayGeometry = computeFlow(ctx.tpl, area.w, dayBlocks.length)
+  // The night list reads as more of the same sheet, not a second one with its
+  // own type size — it takes the day grid's column width and just uses as
+  // many of those columns as it needs, rather than stretching a lone night
+  // route to fill the whole row the way a lone day route would.
+  const { columnGap, align } = ctx.tpl.flow
+  const nightColumns = Math.max(1, Math.min(dayGeometry.columns, nightBlocks.length))
+  const nightUsed = nightColumns * dayGeometry.blockWidth + (nightColumns - 1) * columnGap
+  const nightSlack = Math.max(0, area.w - nightUsed)
+  const nightGeometry: FlowGeometry = {
+    columns: nightColumns,
+    blockWidth: dayGeometry.blockWidth,
+    blockScale: dayGeometry.blockScale,
+    offsetX: align === 'center' ? nightSlack / 2 : align === 'right' ? nightSlack : 0,
+  }
+  const blockScale = dayGeometry.blockScale
+  // A section break reads as more than the next row down.
+  const breakGap = ctx.tpl.flow.rowGap * 2
+
+  const at = (fitScale: number): BlocksResult & { total: number } => {
+    const day = layoutContent({ ...ctx, scale: dayGeometry.blockScale * fitScale }, dayBlocks, area, dayGeometry)
+    const nightCtx: LayoutContext = { ...ctx, scale: nightGeometry.blockScale * fitScale }
+    const nightY = area.y + day.height + (day.height > 0 ? breakGap : 0)
+    const heading = nightHeading(nightCtx, { x: area.x, y: nightY, w: area.w, h: 0 })
+    const night = layoutContent(nightCtx, nightBlocks, { ...area, y: nightY + heading.height }, nightGeometry)
+    const total = nightY - area.y + heading.height + night.height
+    return {
+      prims: [...day.prims, ...heading.prims, ...night.prims],
+      height: total,
+      columns: Math.max(day.columns, night.columns),
+      rows: day.rows + night.rows,
+      fitScale,
+      overflow: total > area.h,
+      blockScale,
+      total,
+    }
+  }
+
+  const full = at(1)
+  if (!ctx.tpl.flow.autoFit || full.total <= area.h) return full
+
+  const floor = Math.min(1, Math.max(0.05, ctx.tpl.flow.minScale))
+  const atFloor = at(floor)
+  if (atFloor.total > area.h) return atFloor
+
+  let lo = floor
+  let hi = 1
+  let best = atFloor
+  for (let i = 0; i < 18 && hi - lo > 1e-4; i++) {
+    const mid = (lo + hi) / 2
+    const result = at(mid)
+    if (result.total <= area.h) {
+      best = { ...result, overflow: false }
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  return best
+}
+
 /**
  * Turn one stop's schedule into positioned geometry.
  *
@@ -87,8 +215,7 @@ export const layoutSheet = (book: FontBook, tpl: MasterTemplate, input: SheetInp
   const tokens = buildTokens(input, tpl)
 
   const area = contentArea(artboard, artboard.margins, zones.header, zones.footer)
-  const geometry = computeFlow(tpl, area.w, input.blocks.length)
-  const fitted = fitContent(ctx, input.blocks, area, geometry)
+  const fitted = layoutBlocks(ctx, input.blocks, area)
 
   const prims: Primitive[] = []
 
@@ -104,11 +231,25 @@ export const layoutSheet = (book: FontBook, tpl: MasterTemplate, input: SheetInp
   }
 
   prims.push(
-    ...layoutZone(ctx, zones.header, zoneRect(artboard, artboard.margins, zones.header, 'header'), tokens, 'header'),
+    ...layoutZone(
+      ctx,
+      zones.header,
+      zoneRect(artboard, artboard.margins, zones.header, 'header'),
+      tokens,
+      'header',
+      artboard,
+    ),
   )
   prims.push(...fitted.prims)
   prims.push(
-    ...layoutZone(ctx, zones.footer, zoneRect(artboard, artboard.margins, zones.footer, 'footer'), tokens, 'footer'),
+    ...layoutZone(
+      ctx,
+      zones.footer,
+      zoneRect(artboard, artboard.margins, zones.footer, 'footer'),
+      tokens,
+      'footer',
+      artboard,
+    ),
   )
 
   if (artboard.cropMarks) {
@@ -121,7 +262,7 @@ export const layoutSheet = (book: FontBook, tpl: MasterTemplate, input: SheetInp
     bleed: artboard.bleed,
     primitives: prims,
     diagnostics: {
-      scale: geometry.blockScale * fitted.fitScale,
+      scale: fitted.blockScale * fitted.fitScale,
       fitScale: fitted.fitScale,
       columns: fitted.columns,
       rows: fitted.rows,

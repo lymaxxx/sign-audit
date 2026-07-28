@@ -278,11 +278,19 @@ export interface BlockConfig {
     window: string
     times: string
     hourly: string
+    /** Heading above the night-routes list at the foot of the sheet. */
+    nightRoutes: string
   }
   /** Unit printed under a headway figure. */
   intervalUnit: string
   /** What sits between the two ends of a headway range: `8–10`, `8~10`. */
   intervalSeparator: string
+  /** A range no wider than this, in minutes, prints as one averaged figure
+   *  (`~9`) instead of the two ends (`8–10`) — the ends are real evidence but
+   *  not worth making a rider do arithmetic over a couple of minutes. */
+  intervalAverageThreshold: number
+  /** Printed in front of an averaged figure. */
+  intervalAveragePrefix: string
 }
 
 /**
