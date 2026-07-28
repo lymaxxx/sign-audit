@@ -53,7 +53,7 @@ interface Run {
  * within tolerance. Each run owns departures `[start, end]`; the departure that
  * closes its rhythm belongs to the next run, so nothing is printed twice.
  */
-const findRuns = (times: Minutes[], tolerance: number, toleranceRatio: number): Run[] => {
+const findRuns = (times: Minutes[], rules: SegmentRules): Run[] => {
   const n = times.length
   if (n === 0) return []
   if (n === 1) return [{ start: 0, end: 0, headways: [], reach: 0 }]
@@ -63,53 +63,110 @@ const findRuns = (times: Minutes[], tolerance: number, toleranceRatio: number): 
 
   const runs: Run[] = []
   let startIdx = 0
-  let lo = headways[0]!
-  let hi = headways[0]!
-  let sum = headways[0]!
-  let count = 1
+  let current: number[] = [headways[0]!]
+
+  const settled = () => median(current.filter((h) => h > 0))
 
   for (let i = 1; i < headways.length; i++) {
     const h = headways[i]!
-    const nextLo = Math.min(lo, h)
-    const nextHi = Math.max(hi, h)
-    // Allowance grows with the headway itself: a 20-minute service that
-    // wanders by 8 minutes is as regular as a 5-minute one wandering by 2.
-    const allowed = Math.max(tolerance, ((sum + h) / (count + 1)) * toleranceRatio)
-    if (nextHi - nextLo <= allowed) {
-      lo = nextLo
-      hi = nextHi
-      sum += h
-      count++
+    const rhythm = settled()
+    const allowed = Math.max(rules.headwayTolerance, rhythm * rules.headwayToleranceRatio)
+
+    // Part of the rhythm, or a trip that simply was not run — either way the
+    // run carries on. Only a gap that is neither ends it.
+    const fits = Math.abs(h - rhythm) <= allowed
+    const multiple = rhythm > 0 ? Math.round(h / rhythm) : 0
+    const skipped = multiple >= 2 && multiple <= 4 && Math.abs(h - rhythm * multiple) <= allowed
+
+    if (fits || skipped) {
+      current.push(h)
       continue
     }
-    // Rhythm broke at headway i: the run owns departures up to i-1, and its
-    // rhythm reaches departure i.
+
     runs.push({ start: startIdx, end: i - 1, headways: headways.slice(startIdx, i), reach: i })
     startIdx = i
-    lo = h
-    hi = h
-    sum = h
-    count = 1
+    current = [h]
   }
 
-  runs.push({
-    start: startIdx,
-    end: n - 1,
-    headways: headways.slice(startIdx),
-    reach: n - 1,
-  })
+  runs.push({ start: startIdx, end: n - 1, headways: headways.slice(startIdx), reach: n - 1 })
   return runs
 }
 
-const mean = (xs: number[]): number => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length)
+
+export const median = (xs: number[]): number => {
+  if (xs.length === 0) return 0
+  const sorted = [...xs].sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)]!
+}
+
+export interface HeadwayReading {
+  /** Gaps that belong to the rhythm, with missing trips left out. */
+  regular: number[]
+  /** Gaps that read as a trip simply not being run. */
+  missing: number
+  /** Gaps that break the rhythm outright. */
+  broken: number
+  median: number
+  /** True when the rhythm is tight enough to quote as a single headway. */
+  steady: boolean
+}
+
+/**
+ * Read a run of gaps as a headway.
+ *
+ * Real timetables are not tidy. A line running every 30 minutes will have an
+ * hour-long hole in the middle of the day where one trip is not run, and a
+ * naive reading breaks the day in half there and quotes "every 20-60 minutes"
+ * — neither of which is what the service does. A gap close to a whole multiple
+ * of the prevailing headway is therefore read as a missing trip: it does not
+ * end the run, and it does not enter the range that gets printed.
+ */
+export const readHeadways = (gaps: number[], rules: SegmentRules): HeadwayReading => {
+  if (gaps.length === 0) return { regular: [], missing: 0, broken: 0, median: 0, steady: false }
+
+  const mid = median(gaps)
+  const allowed = Math.max(rules.headwayTolerance, mid * rules.headwayToleranceRatio)
+
+  const regular: number[] = []
+  let missing = 0
+  let broken = 0
+
+  for (const gap of gaps) {
+    if (Math.abs(gap - mid) <= allowed) {
+      regular.push(gap)
+      continue
+    }
+    // Two, three or four times the rhythm is a trip that did not run.
+    const multiple = Math.round(gap / mid)
+    if (multiple >= 2 && multiple <= 4 && Math.abs(gap - mid * multiple) <= allowed) missing++
+    else broken++
+  }
+
+  // Distance from the median admits a missing trip; the spread of what is left
+  // is what decides whether this reads as one headway. Judging only by the
+  // former would let a service wandering between 15 and 45 minutes pass as
+  // "every 30", which is not a rhythm anyone can wait on.
+  const spread = regular.length > 0 ? Math.max(...regular) - Math.min(...regular) : Infinity
+  const steady = spread <= allowed
+
+  return { regular, missing, broken, median: mid, steady }
+}
 
 /** Does this run read as regular service rather than a handful of departures? */
 const qualifiesAsInterval = (run: Run, times: Minutes[], rules: SegmentRules): boolean => {
   const tripCount = run.reach - run.start + 1
   if (tripCount < rules.minTripsForInterval) return false
   if (run.headways.length === 0) return false
-  const avg = mean(run.headways)
-  if (avg > rules.maxHeadwayForInterval) return false
+
+  const reading = readHeadways(run.headways, rules)
+  if (reading.regular.length === 0 || !reading.steady) return false
+  // A stray hole is tolerable; a run that is mostly holes is not a headway.
+  if (reading.missing > reading.regular.length / 3) return false
+
+  // Judged on the median rather than the mean, so one long gap cannot drag a
+  // clear 30-minute service past the threshold that admits it.
+  if (reading.median > rules.maxHeadwayForInterval) return false
+
   const span = times[run.reach]! - times[run.start]!
   if (span < rules.minSpanForInterval) return false
   return true
@@ -130,8 +187,10 @@ const makeInterval = (run: Run, times: Minutes[], rules: SegmentRules): Interval
     kind: 'interval',
     from,
     to,
-    min: Math.min(...run.headways),
-    max: Math.max(...run.headways),
+    // The quoted range covers the rhythm, not the holes in it: printing
+    // "every 20-60 minutes" because one trip was missed helps nobody.
+    min: Math.min(...readHeadways(run.headways, rules).regular),
+    max: Math.max(...readHeadways(run.headways, rules).regular),
     times: times.slice(run.start, run.end + 1),
   }
 }
@@ -193,7 +252,7 @@ export const segmentDayCore = (raw: Minutes[], rules: SegmentRules): Section[] =
     return [{ kind: 'times', from: times[0]!, to: times[0]!, times }]
   }
 
-  const runs = findRuns(times, rules.headwayTolerance, rules.headwayToleranceRatio)
+  const runs = findRuns(times, rules)
   const sections: Section[] = []
   let pending: Minutes[] = []
 

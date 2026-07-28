@@ -1,6 +1,6 @@
 import { cleanTimes, floorHour, type Minutes } from '../model/time'
 import type { SegmentRules } from '../model/template'
-import { segmentDayCore, type Section } from './core'
+import { readHeadways, segmentDayCore, type Section } from './core'
 
 /**
  * Segmenting every kind of day together, rather than one at a time.
@@ -65,16 +65,19 @@ const fillWindow = (times: Minutes[], window: Window, rules: SegmentRules): Sect
   const gaps = headwaysOf(times)
   if (gaps.length === 0) return classifyIrregular(times, rules)
 
-  const min = Math.min(...gaps)
-  const max = Math.max(...gaps)
-  const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length
-  const allowed = Math.max(rules.headwayTolerance, avg * rules.headwayToleranceRatio)
+  const reading = readHeadways(gaps, rules)
+  if (reading.regular.length === 0) return classifyIrregular(times, rules)
+
+  const min = Math.min(...reading.regular)
+  const max = Math.max(...reading.regular)
 
   // Generous: the consensus already found a rhythm here, so this only catches
   // a column that genuinely does not share it. The ratio test is the one that
   // matters — "every 5-25 minutes" tells a passenger nothing, however tidy the
-  // arithmetic behind it.
-  if (max > min * rules.maxHeadwayRatio || max - min > allowed * 2 || avg > rules.maxHeadwayForInterval) {
+  // arithmetic behind it. Holes where a trip was not run are read as such and
+  // kept out of both the range and the judgement.
+  const brokenBadly = reading.broken > 0 || !reading.steady || reading.missing > reading.regular.length / 3
+  if (brokenBadly || max > min * rules.maxHeadwayRatio || reading.median > rules.maxHeadwayForInterval) {
     return classifyIrregular(times, rules)
   }
 

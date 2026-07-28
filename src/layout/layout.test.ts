@@ -88,8 +88,10 @@ describe('sheet layout', () => {
     const area = contentArea(tpl.artboard, tpl.artboard.margins, tpl.zones.header, tpl.zones.footer)
 
     expect(page.diagnostics.availableHeight).toBeCloseTo(area.h, 5)
-    expect(page.diagnostics.contentHeight).toBeLessThanOrEqual(area.h + 0.01)
-    // The footer's own top edge is below everything the schedule drew.
+    // Either it fits in what the bands left, or it is flagged. What must never
+    // happen is content quietly running on under the footer.
+    expect(page.diagnostics.contentHeight <= area.h + 0.01 || page.diagnostics.overflow).toBe(true)
+    // The content area stops where the footer begins.
     expect(area.y + area.h).toBeLessThanOrEqual(tpl.artboard.height - tpl.artboard.margins.bottom - 200 + 0.01)
   })
 

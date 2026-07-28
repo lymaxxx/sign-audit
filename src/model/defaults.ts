@@ -71,7 +71,7 @@ export const defaultRules = (): SegmentRules => ({
   headwayTolerance: 5,
   headwayToleranceRatio: 0.5,
   minTripsForInterval: 6,
-  maxHeadwayForInterval: 30,
+  maxHeadwayForInterval: 60,
   maxHeadwayRatio: 2.2,
   minSpanForInterval: 120,
   hourlyThreshold: 20,

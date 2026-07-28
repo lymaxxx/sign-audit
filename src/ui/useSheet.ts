@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { getFontBook } from '../layout/fonts.browser'
 import { BUNDLED_FONTS, type FontBook } from '../layout/fonts'
 import { cssFamily } from '../render/svg'
@@ -75,33 +75,81 @@ export const buildPage = (
   })
 }
 
-/** The sheet for whichever stop is selected. */
+/**
+ * The sheet for whichever stop is selected.
+ *
+ * Laying out a sheet costs enough to be felt between keystrokes, so it runs at
+ * a lower priority than the typing that caused it: the field updates at once
+ * and the canvas follows a frame or two later. Without this, every character
+ * typed into an inspector field waited on a full re-layout before appearing.
+ */
 export const useCurrentPage = (book: FontBook | null): Page | null => {
   const project = useStore((s) => s.project)
   const stopId = useStore((s) => s.selection.stopId)
+  const deferred = useDeferredValue(project)
+
+  const { timetable, template, edits } = deferred
+  const stop = stopId ? timetable.stops.find((s) => s.id === stopId) : undefined
+
+  // Segmentation reads only the rules and the row wording. Recomputing it
+  // because someone retyped the title meant re-deciding how every route
+  // describes its day, on every keystroke, for nothing.
+  const shapeKey = JSON.stringify([template.rules, template.block.labels])
+  const stopEdits = stopId ? edits[stopId] : undefined
+
+  const blocks = useMemo(() => {
+    if (!stop) return null
+    return buildSheetBlocks(timetable, stop.id, template, stopEdits ?? {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timetable, stop?.id, shapeKey, stopEdits])
 
   return useMemo(() => {
-    if (!book || !stopId) return null
-    return buildPage(book, project, stopId)
-  }, [book, project, stopId])
+    if (!book || !stop || !blocks) return null
+    return layoutSheet(book, template, {
+      stop,
+      blocks,
+      date: todayLabel(),
+      ...(stopEdits?.titleOverride !== undefined ? { titleOverride: stopEdits.titleOverride } : {}),
+      ...(stopEdits?.subtitleOverride !== undefined ? { subtitleOverride: stopEdits.subtitleOverride } : {}),
+    })
+  }, [book, template, blocks, stop, stopEdits])
 }
 
 /**
  * Which stops the layout could not fit.
  *
- * Recomputed across the whole network, because a template change that rescues
- * one stop can break another, and finding that out at export time is too late.
+ * Checked across the whole network, because a template change that rescues one
+ * stop can break another, and finding that out at export time is too late.
+ *
+ * Laying out every sheet is far too expensive to do between keystrokes, so it
+ * waits for a pause in the editing. The flags lag the canvas by a moment; the
+ * canvas staying responsive is worth more than the flags being instant.
  */
+const IDLE_BEFORE_SCAN = 400
+
 export const useOverflowingStops = (book: FontBook | null): Set<string> => {
   const project = useStore((s) => s.project)
+  const [flagged, setFlagged] = useState<Set<string>>(() => new Set())
 
-  return useMemo(() => {
-    const flagged = new Set<string>()
-    if (!book) return flagged
-    for (const stop of project.timetable.stops) {
-      const page = buildPage(book, project, stop.id)
-      if (page?.diagnostics.overflow) flagged.add(stop.id)
+  useEffect(() => {
+    if (!book) return
+    let cancelled = false
+
+    const timer = setTimeout(() => {
+      const found = new Set<string>()
+      for (const stop of project.timetable.stops) {
+        if (cancelled) return
+        const page = buildPage(book, project, stop.id)
+        if (page?.diagnostics.overflow) found.add(stop.id)
+      }
+      if (!cancelled) setFlagged(found)
+    }, IDLE_BEFORE_SCAN)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
     }
-    return flagged
   }, [book, project])
+
+  return flagged
 }

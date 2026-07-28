@@ -80,7 +80,21 @@ export type InspectorTab = 'artboard' | 'flow' | 'zones' | 'type' | 'colour' | '
 
 const HISTORY_LIMIT = 60
 
-const clone = <T,>(value: T): T => structuredClone(value)
+/**
+ * Snapshot a project for the undo stack.
+ *
+ * Only the template and the per-stop edits are copied. The timetable is
+ * replaced wholesale on import and never mutated in place, so it can be shared
+ * between every history entry — and it is by far the largest thing here. Deep
+ * copying it turned a keystroke in a text field into two clones of a Map
+ * holding thousands of departure arrays, which is what made typing crawl.
+ */
+const clone = (project: Project): Project => ({
+  name: project.name,
+  timetable: project.timetable,
+  template: structuredClone(project.template),
+  edits: structuredClone(project.edits),
+})
 
 const demoProject = (): Project => {
   const timetable = makeDemoTimetable()
@@ -193,19 +207,22 @@ export const useStore = create<AppState>((set, get) => ({
   mergeTimetable: (timetable, issues) =>
     set((s) => {
       const next = clone(s.project)
-      const t = next.timetable
+      const old = s.project.timetable
 
-      const routeIds = new Set(t.routes.map((r) => r.id))
-      for (const route of timetable.routes) if (!routeIds.has(route.id)) t.routes.push(route)
+      // A fresh timetable rather than an edit in place: history entries share
+      // this object, so mutating it would rewrite the past as well.
+      const byId = <T extends { id: string }>(existing: T[], incoming: T[]): T[] => {
+        const seen = new Set(existing.map((x) => x.id))
+        return [...existing, ...incoming.filter((x) => !seen.has(x.id))]
+      }
 
-      const stopIds = new Set(t.stops.map((x) => x.id))
-      for (const stop of timetable.stops) if (!stopIds.has(stop.id)) t.stops.push(stop)
-
-      const dayIds = new Set(t.dayTypes.map((d) => d.id))
-      for (const day of timetable.dayTypes) if (!dayIds.has(day.id)) t.dayTypes.push(day)
-
-      // Later imports win for a given route, stop and kind of day.
-      for (const [key, times] of timetable.departures) t.departures.set(key, times)
+      next.timetable = {
+        routes: byId(old.routes, timetable.routes),
+        stops: byId(old.stops, timetable.stops),
+        dayTypes: byId(old.dayTypes, timetable.dayTypes),
+        // Later imports win for a given route, stop and kind of day.
+        departures: new Map([...old.departures, ...timetable.departures]),
+      }
 
       return {
         project: next,
