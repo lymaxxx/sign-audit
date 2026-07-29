@@ -66,8 +66,25 @@ it happens to be called — or on demand from the Actions tab.
 One-time setup: in the repository settings, under **Pages**, set **Source** to
 **GitHub Actions**.
 
-The site is served from `/algach/`, set as `base` in `vite.config.js`. If you
-deploy somewhere else, override it at build time:
+### Moving it to another repository
+
+Nothing is tied to this repository's name. A project site is served from
+`https://<user>.github.io/<repo>/`, and `vite.config.js` reads that prefix from
+`GITHUB_REPOSITORY`, which GitHub Actions sets for you. So:
+
+```sh
+git remote set-url origin git@github.com:<you>/<new-repo>.git
+git push -u origin HEAD
+```
+
+Then set Pages → Source → GitHub Actions on the new repository, and make sure
+the branch you pushed is its default branch. Nothing to edit.
+
+To start with clean history instead, copy the working tree into a fresh clone
+and commit it as one commit — the app has no dependency on this repo's history.
+
+For a custom domain served from the root, or any other host, set the prefix
+explicitly at build time:
 
 ```sh
 BASE_PATH=/ npm run build

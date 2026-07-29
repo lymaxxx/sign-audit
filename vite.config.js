@@ -2,10 +2,14 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// Deployed as a GitHub Pages *project* site at https://<user>.github.io/algach/,
-// so every asset URL needs the repo name as a prefix. Override with BASE_PATH=/
-// when serving from a domain root.
-const base = process.env.BASE_PATH ?? '/algach/'
+// A GitHub Pages project site lives at https://<user>.github.io/<repo>/, so
+// every asset URL needs the repo name as a prefix. GitHub Actions sets
+// GITHUB_REPOSITORY to "owner/repo", so the deployed base follows the
+// repository automatically — moving this project to a differently named repo
+// needs no code change. Locally there is no prefix, and BASE_PATH overrides
+// both (use BASE_PATH=/ for a custom domain served from its root).
+const repo = process.env.GITHUB_REPOSITORY?.split('/')[1]
+const base = process.env.BASE_PATH ?? (repo ? `/${repo}/` : '/')
 
 export default defineConfig({
   base,
