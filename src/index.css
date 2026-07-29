@@ -437,6 +437,13 @@ select {
   cursor: default;
 }
 
+/* The mark is placed by the layout rather than dragged into position, so it
+   shows a faint outline even at rest — otherwise there is nothing on the
+   sheet to tell you it can be grabbed at all. */
+.overlay-item.is-pictogram {
+  border-color: rgba(31, 111, 235, 0.28);
+}
+
 .overlay-handle {
   position: absolute;
   right: -4px;

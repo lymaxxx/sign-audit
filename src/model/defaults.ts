@@ -159,7 +159,17 @@ const emptyZone = (height: number): ZoneConfig => ({
   scale: 1,
   stack: true,
   stackGap: 1.5,
-  pictogram: { show: false, source: '', format: 'svg', size: 14, gap: 4, align: 'top' },
+  pictogram: {
+    show: false,
+    source: '',
+    format: 'svg',
+    size: 14,
+    gap: 4,
+    align: 'top',
+    offsetX: 0,
+    offsetY: 0,
+    wrapText: false,
+  },
   items: [],
 })
 

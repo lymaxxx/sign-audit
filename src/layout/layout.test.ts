@@ -228,6 +228,109 @@ describe('departure grids across the cell width', () => {
   })
 })
 
+describe('the header pictogram', () => {
+  const MARK = '<svg viewBox="0 0 10 10"><path d="M0 0 H10 V10 H0 Z"/></svg>'
+
+  const withMark = (tune: (t: MasterTemplate) => void = () => {}): Page => {
+    const tpl = createDefaultTemplate()
+    tpl.artboard.width = 210
+    tpl.artboard.height = 297
+    tpl.zones.header.height = 46
+    const mark = tpl.zones.header.pictogram
+    mark.show = true
+    mark.source = MARK
+    mark.size = 20
+    mark.gap = 4
+    // A title long enough to take several lines beside a 20mm mark.
+    tpl.title.template = 'Saint Bernard Hospital and Europort Road Interchange Terminal'
+    tune(tpl)
+    const blocks = buildSheetBlocks(timetable, 's1', tpl)
+    const stop = timetable.stops.find((s) => s.id === 's1')!
+    return layoutSheet(book, tpl, { stop, blocks, date: '1 Jan 2026' })
+  }
+
+  /** Distinct left edges of the header's text lines, top to bottom. */
+  const headerLineStarts = (page: Page): number[] => {
+    const byLine = new Map<number, number>()
+    for (const p of page.primitives) {
+      if (p.type !== 'text' || p.y > 46) continue
+      const key = Math.round(p.y * 100)
+      byLine.set(key, Math.min(byLine.get(key) ?? Infinity, p.x))
+    }
+    return [...byLine.entries()].sort((a, b) => a[0] - b[0]).map(([, x]) => x)
+  }
+
+  it('hands the canvas a handle for the mark it drew', () => {
+    const page = withMark()
+    expect(page.handles).toHaveLength(1)
+    expect(page.handles[0]!.kind).toBe('pictogram')
+    expect(page.handles[0]!.zone).toBe('header')
+    expect(page.handles[0]!.w).toBe(20)
+  })
+
+  it('lets a negative nudge carry the mark outside the page margin', () => {
+    const inside = withMark().handles[0]!
+    const nudged = withMark((t) => void (t.zones.header.pictogram.offsetX = -20)).handles[0]!
+    expect(nudged.x).toBeCloseTo(inside.x - 20, 5)
+    // Past the trim edge entirely, which the old clamping made impossible.
+    expect(nudged.x).toBeLessThan(0)
+  })
+
+  it('centres a mark taller than the text instead of pinning it to the top', () => {
+    // The offset used to be clamped at zero, so a mark taller than the text
+    // it was centring against simply sat at the top.
+    const short = withMark((t) => {
+      t.title.template = 'Rosia'
+      t.zones.header.pictogram.align = 'middle'
+      t.zones.header.pictogram.size = 30
+    })
+    const top = withMark((t) => {
+      t.title.template = 'Rosia'
+      t.zones.header.pictogram.align = 'top'
+      t.zones.header.pictogram.size = 30
+    })
+    expect(short.handles[0]!.y).toBeLessThan(top.handles[0]!.y)
+  })
+
+  // Small enough that the title runs past its bottom edge, which is the only
+  // arrangement where wrapping and indenting differ at all.
+  const shortMark = (t: MasterTemplate) => void (t.zones.header.pictogram.size = 9)
+
+  it('indents every line when wrapping is off', () => {
+    const starts = headerLineStarts(
+      withMark((t) => {
+        shortMark(t)
+        t.zones.header.pictogram.wrapText = false
+      }),
+    )
+    expect(starts.length).toBeGreaterThan(1)
+    expect(new Set(starts.map((x) => Math.round(x * 100))).size).toBe(1)
+  })
+
+  it('lets the lines below the mark run back to the full width when wrapping is on', () => {
+    const starts = headerLineStarts(
+      withMark((t) => {
+        shortMark(t)
+        t.zones.header.pictogram.wrapText = true
+      }),
+    )
+    expect(starts.length).toBeGreaterThan(1)
+    // The first line sits beside the mark; something below it does not.
+    expect(Math.min(...starts)).toBeLessThan(starts[0]!)
+  })
+
+  it('keeps the wrapped text clear of the mark', () => {
+    const page = withMark((t) => void (t.zones.header.pictogram.wrapText = true))
+    const mark = page.handles[0]!
+    for (const p of page.primitives) {
+      if (p.type !== 'text' || p.y > 46) continue
+      // A line whose band overlaps the mark must start past its right edge.
+      const overlaps = p.y - p.sizeMm < mark.y + mark.h && p.y > mark.y
+      if (overlaps) expect(p.x).toBeGreaterThanOrEqual(mark.x + mark.w - 0.01)
+    }
+  })
+})
+
 describe('night routes', () => {
   // A fresh copy per test: these mark a route as a night route, and the
   // shared demo timetable above must stay untouched for every other test.

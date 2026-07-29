@@ -265,27 +265,26 @@ export const layoutSheet = (book: FontBook, tpl: MasterTemplate, input: SheetInp
     })
   }
 
-  prims.push(
-    ...layoutZone(
-      ctx,
-      zones.header,
-      zoneRect(artboard, artboard.margins, zones.header, 'header'),
-      tokens,
-      'header',
-      artboard,
-    ),
+  const header = layoutZone(
+    ctx,
+    zones.header,
+    zoneRect(artboard, artboard.margins, zones.header, 'header'),
+    tokens,
+    'header',
+    artboard,
   )
+  const footer = layoutZone(
+    ctx,
+    zones.footer,
+    zoneRect(artboard, artboard.margins, zones.footer, 'footer'),
+    tokens,
+    'footer',
+    artboard,
+  )
+
+  prims.push(...header.prims)
   prims.push(...fitted.prims)
-  prims.push(
-    ...layoutZone(
-      ctx,
-      zones.footer,
-      zoneRect(artboard, artboard.margins, zones.footer, 'footer'),
-      tokens,
-      'footer',
-      artboard,
-    ),
-  )
+  prims.push(...footer.prims)
 
   if (artboard.cropMarks) {
     prims.push(...cropMarks(artboard.width, artboard.height, artboard.bleed))
@@ -296,6 +295,7 @@ export const layoutSheet = (book: FontBook, tpl: MasterTemplate, input: SheetInp
     height: artboard.height,
     bleed: artboard.bleed,
     primitives: prims,
+    handles: [...header.handles, ...footer.handles],
     diagnostics: {
       scale: fitted.blockScale * fitted.fitScale,
       fitScale: fitted.fitScale,

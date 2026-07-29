@@ -1,7 +1,7 @@
 import type { LayoutContext } from './block'
 import { colorOf, text as emitText, styleOf } from './block'
 import { wrapText } from './fonts'
-import type { Primitive } from './primitives'
+import type { LayoutHandle, Primitive } from './primitives'
 import type { Rect } from '../model/units'
 import type { VectorItem, ZoneConfig } from '../model/template'
 import { artworkPrimitives, parseArtwork } from './svgArt'
@@ -109,28 +109,62 @@ const drawArtwork = (
   return artworkPrimitives(parseArtwork(source), box, tint)
 }
 
+/**
+ * A region the text has to keep clear of — the pictogram, in practice.
+ *
+ * Lines that overlap it vertically are pushed right and set narrower; lines
+ * below it get the whole width back. Without this the mark's indent applied
+ * to every line, so a two-line title left a column of white beneath a mark
+ * only tall enough to displace the first line.
+ */
+interface WrapAround {
+  /** How far to push a line that sits beside the mark. */
+  indent: number
+  /** Bottom edge of the mark, in sheet millimetres. */
+  until: number
+}
+
 const drawTextItem = (
   ctx: LayoutContext,
   item: Extract<VectorItem, { kind: 'text' }>,
   box: Rect,
   tokens: TokenValues,
   scale: number,
+  wrapAround?: WrapAround,
 ): DrawnText => {
   const body = substituteTokens(item.text, tokens)
   if (!body.trim()) return { prims: [], height: 0 }
 
   const zoneCtx: LayoutContext = { ...ctx, scale }
   const style = styleOf(zoneCtx, item.role)
-  const lines = wrapText(ctx.book, body, style, scale, box.w)
   const lineH = ctx.book.lineHeight(style, scale)
   const baseline = ctx.book.baselineOffset(style, scale)
+
+  // Wrapping has to be measured against the narrower width, or a line broken
+  // for the full width would overrun the mark once it is indented. Every line
+  // that could sit beside the mark is therefore wrapped short; the ones that
+  // end up below it are simply set wider than they were broken for, which
+  // costs nothing but a slightly early break.
+  const indent = wrapAround?.indent ?? 0
+  const lines = wrapText(ctx.book, body, style, scale, Math.max(1, box.w - indent))
   const blockHeight = lines.length * lineH
 
   let top = box.y
   if (item.valign === 'middle') top = box.y + (box.h - blockHeight) / 2
   else if (item.valign === 'bottom') top = box.y + box.h - blockHeight
 
-  const anchorX = item.align === 'left' ? box.x : item.align === 'center' ? box.x + box.w / 2 : box.x + box.w
+  /** Where a given line starts, and how wide it may be. */
+  const lineBox = (i: number): { x: number; w: number } => {
+    if (!wrapAround) return { x: box.x, w: box.w }
+    const lineTop = top + i * lineH
+    const beside = lineTop < wrapAround.until
+    return beside
+      ? { x: box.x + wrapAround.indent, w: box.w - wrapAround.indent }
+      : { x: box.x, w: box.w }
+  }
+
+  const anchorFor = (x: number, w: number): number =>
+    item.align === 'left' ? x : item.align === 'center' ? x + w / 2 : x + w
 
   const out: Primitive[] = []
 
@@ -140,7 +174,9 @@ const drawTextItem = (
   if (frame?.show) {
     const widest = Math.max(...lines.map((l) => ctx.book.measure(l, style, scale)), 0)
     const p = frame.padding
-    const frameX = item.align === 'left' ? box.x : item.align === 'center' ? anchorX - widest / 2 : anchorX - widest
+    const first = lineBox(0)
+    const anchorX = anchorFor(first.x, first.w)
+    const frameX = item.align === 'left' ? first.x : item.align === 'center' ? anchorX - widest / 2 : anchorX - widest
     out.push({
       type: 'rect',
       x: frameX - p.left,
@@ -156,7 +192,8 @@ const drawTextItem = (
   }
 
   lines.forEach((line, i) => {
-    out.push(...emitText(zoneCtx, line, item.role, anchorX, top + i * lineH + baseline, item.align))
+    const { x, w } = lineBox(i)
+    out.push(...emitText(zoneCtx, line, item.role, anchorFor(x, w), top + i * lineH + baseline, item.align))
   })
 
   const frameHeight = frame?.show ? blockHeight + frame.padding.top + frame.padding.bottom : blockHeight
@@ -214,6 +251,12 @@ const drawPatternItem = (
   return out
 }
 
+export interface ZoneResult {
+  prims: Primitive[]
+  /** Boxes the editor needs a grip on, in sheet millimetres. */
+  handles: LayoutHandle[]
+}
+
 /** Render one band: background, its items in z-order, then its divider. */
 export const layoutZone = (
   ctx: LayoutContext,
@@ -222,9 +265,10 @@ export const layoutZone = (
   tokens: TokenValues,
   which: 'header' | 'footer',
   artboard: { width: number; height: number; bleed: number },
-): Primitive[] => {
-  if (zone.height <= 0) return []
+): ZoneResult => {
+  if (zone.height <= 0) return { prims: [], handles: [] }
   const out: Primitive[] = []
+  const handles: LayoutHandle[] = []
 
   if (zone.background !== 'none') {
     // The fill reads as a printed band, not a box drawn inside the margins: it
@@ -243,54 +287,100 @@ export const layoutZone = (
   const innerY = box.y + p.top
   const innerW = Math.max(0, box.w - p.left - p.right)
 
-  // A mark to the left of the text, with the text indented past it, so the two
+  // A mark to the left of the text, with the text set clear of it, so the two
   // read as one unit rather than as art that happens to be nearby.
   const pictogram = zone.pictogram
-  const markWidth = pictogram.show && pictogram.source ? pictogram.size + pictogram.gap : 0
+  const hasMark = pictogram.show && Boolean(pictogram.source)
+  const markWidth = hasMark ? pictogram.size + pictogram.gap : 0
 
   const textItems = zone.items.filter((i): i is Extract<VectorItem, { kind: 'text' }> => i.kind === 'text')
   const others = zone.items.filter((i) => i.kind !== 'text')
 
-  const stackedPrims: Primitive[] = []
-  let stackTop = innerY
-  let stackHeight = 0
-
-  if (zone.stack) {
-    let cursor = innerY
-    for (const item of textItems) {
-      const width = Math.max(0, Math.min(item.w, innerW - markWidth))
-      const drawn = drawTextItem(ctx, item, { x: innerX + markWidth, y: cursor, w: width, h: item.h }, tokens, zone.scale)
-      if (drawn.height === 0) continue
-      stackedPrims.push(...drawn.prims)
-      cursor += drawn.height + zone.stackGap
-    }
-    stackHeight = Math.max(0, cursor - innerY - zone.stackGap)
-  } else {
-    for (const item of textItems) {
-      const rect = resolveItemRect(item, zone, box)
-      const drawn = drawTextItem(ctx, item, { ...rect, x: rect.x + markWidth }, tokens, zone.scale)
-      stackedPrims.push(...drawn.prims)
-      stackTop = Math.min(stackTop, rect.y)
-      stackHeight = Math.max(stackHeight, rect.y + drawn.height - stackTop)
-    }
+  interface LaidText {
+    prims: Primitive[]
+    top: number
+    height: number
   }
 
-  if (markWidth > 0) {
-    const offset =
+  /**
+   * Lay the zone's text out against a given wrap region.
+   *
+   * Where the mark sits depends on how tall the text turned out, and how the
+   * text sets depends on where the mark sits. The indent is the same either
+   * way, though, so line breaks do not move between passes: the first settles
+   * the height, the second places the lines against the mark's real band.
+   */
+  const layText = (band?: WrapAround): LaidText => {
+    const prims: Primitive[] = []
+    let top = innerY
+    let height = 0
+
+    if (zone.stack) {
+      let cursor = innerY
+      for (const item of textItems) {
+        const width = Math.max(0, Math.min(item.w, innerW))
+        const drawn = drawTextItem(ctx, item, { x: innerX, y: cursor, w: width, h: item.h }, tokens, zone.scale, band)
+        if (drawn.height === 0) continue
+        prims.push(...drawn.prims)
+        cursor += drawn.height + zone.stackGap
+      }
+      height = Math.max(0, cursor - innerY - zone.stackGap)
+    } else {
+      for (const item of textItems) {
+        const rect = resolveItemRect(item, zone, box)
+        const drawn = drawTextItem(ctx, item, rect, tokens, zone.scale, band)
+        prims.push(...drawn.prims)
+        top = Math.min(top, rect.y)
+        height = Math.max(height, rect.y + drawn.height - top)
+      }
+    }
+    return { prims, top, height }
+  }
+
+  // Every line indented is both the settling pass and, on its own, the
+  // unwrapped behaviour a short title still wants.
+  const fullIndent: WrapAround | undefined = hasMark ? { indent: markWidth, until: Infinity } : undefined
+  const settled = layText(fullIndent)
+
+  let laid = settled
+  if (hasMark) {
+    // Not clamped at zero: a mark taller than the text should overhang it
+    // evenly, which is what centring means, and a nudge may deliberately take
+    // it outside the zone and past the page margin.
+    const alignOffset =
       pictogram.align === 'middle'
-        ? Math.max(0, (stackHeight - pictogram.size) / 2)
+        ? (settled.height - pictogram.size) / 2
         : pictogram.align === 'bottom'
-          ? Math.max(0, stackHeight - pictogram.size)
+          ? settled.height - pictogram.size
           : 0
+
+    const markX = innerX + pictogram.offsetX
+    const markY = settled.top + alignOffset + pictogram.offsetY
+
+    if (pictogram.wrapText) {
+      laid = layText({ indent: markWidth, until: markY + pictogram.size })
+    }
+
     out.push(
       ...drawArtwork(pictogram.source, pictogram.format, {
-        x: innerX,
-        y: stackTop + offset,
+        x: markX,
+        y: markY,
         w: pictogram.size,
         h: pictogram.size,
       }),
     )
+    handles.push({
+      id: `${which}-pictogram`,
+      zone: which,
+      kind: 'pictogram',
+      x: markX,
+      y: markY,
+      w: pictogram.size,
+      h: pictogram.size,
+    })
   }
+
+  const stackedPrims = laid.prims
 
   out.push(...stackedPrims)
 
@@ -322,5 +412,5 @@ export const layoutZone = (
     })
   }
 
-  return out
+  return { prims: out, handles }
 }

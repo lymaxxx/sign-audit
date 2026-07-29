@@ -109,6 +109,29 @@ const cases: Case[] = [
     },
   },
   {
+    id: 'pictogram-wrap',
+    label: 'Header mark centred, hanging past the margin, title wrapped around it',
+    apply: (t) => {
+      t.artboard.width = 210
+      t.artboard.height = 297
+      t.zones.header.height = 44
+      t.zones.header.background = '#12303f'
+      t.styles.title.color = '#ffffff'
+      t.styles.subtitle.color = '#c7d6de'
+      t.title.template = "St. Bernard's Hospital — Europort Road Interchange"
+      Object.assign(t.zones.header.pictogram, {
+        show: true,
+        source:
+          '<svg viewBox="0 0 24 24"><path fill="#e8402a" d="M4 2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-1l2 4h-3l-2-4H6l-2 4H1l2-4H2a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/></svg>',
+        size: 13,
+        gap: 4,
+        align: 'middle',
+        offsetX: -4,
+        wrapText: true,
+      })
+    },
+  },
+  {
     id: 'grid-columns',
     label: 'Full-width blocks, headway ceiling below the service — grids split across the width',
     apply: (t) => {

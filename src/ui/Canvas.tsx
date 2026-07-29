@@ -3,7 +3,7 @@ import type { Page } from '../layout'
 import { resolveItemRect, zoneRect } from '../layout'
 import { renderGuides, renderSvg } from '../render/svg'
 import { useActiveTemplate, useStore } from '../store'
-import type { VectorItem, ZoneId } from '../model/template'
+import type { ZoneId } from '../model/template'
 
 /**
  * The preview, and the editor for the two bands.
@@ -19,8 +19,24 @@ interface DragState {
   itemId: string
   zone: ZoneId
   mode: 'move' | 'resize'
+  /** A band's pictogram is not one of its items; it is positioned by the
+   *  layout and nudged by an offset, so it is dragged through different
+   *  fields. */
+  target: 'item' | 'pictogram'
   startX: number
   startY: number
+  origin: { x: number; y: number; w: number; h: number }
+}
+
+/** What the overlay offers a grip on: a band item, or a band's pictogram. */
+interface OverlayTarget {
+  zone: ZoneId
+  id: string
+  target: 'item' | 'pictogram'
+  locked: boolean
+  title: string
+  rect: { x: number; y: number; w: number; h: number }
+  /** Where a drag starts from, in the fields it will write back to. */
   origin: { x: number; y: number; w: number; h: number }
 }
 
@@ -74,34 +90,61 @@ export const Canvas = ({ page }: { page: Page | null }) => {
     return renderSvg(page, { includeBleed: page.bleed > 0, ...(guides ? { overlay: guides } : {}) })
   }, [page, showGuides, template])
 
-  /** Boxes for every band item, in sheet millimetres. */
-  const overlayItems = useMemo(() => {
+  /** Boxes for every band item and pictogram, in sheet millimetres. */
+  const overlayItems = useMemo((): OverlayTarget[] => {
     if (!page) return []
     const zones: ZoneId[] = ['header', 'footer']
-    return zones.flatMap((zone) => {
+
+    const items = zones.flatMap((zone) => {
       const config = template.zones[zone]
       const box = zoneRect(template.artboard, template.artboard.margins, config, zone)
-      return config.items.map((item) => ({ zone, item, rect: resolveItemRect(item, config, box) }))
+      return config.items.map((item): OverlayTarget => ({
+        zone,
+        id: item.id,
+        target: 'item',
+        locked: Boolean(item.locked),
+        title: item.kind === 'text' ? item.text : item.kind,
+        rect: resolveItemRect(item, config, box),
+        origin: { x: item.x, y: item.y, w: item.w, h: item.h },
+      }))
     })
+
+    // The layout hands these back because it alone knows where the mark
+    // landed — it is placed against the measured height of the text beside it.
+    const marks = page.handles.map((handle): OverlayTarget => {
+      const pictogram = template.zones[handle.zone].pictogram
+      return {
+        zone: handle.zone,
+        id: handle.id,
+        target: 'pictogram',
+        locked: false,
+        title: 'Pictogram',
+        rect: { x: handle.x, y: handle.y, w: handle.w, h: handle.h },
+        origin: { x: pictogram.offsetX, y: pictogram.offsetY, w: pictogram.size, h: pictogram.size },
+      }
+    })
+
+    return [...items, ...marks]
   }, [page, template])
 
   const onPointerDown = useCallback(
-    (event: React.PointerEvent, zone: ZoneId, item: VectorItem, mode: 'move' | 'resize') => {
-      if (item.locked) return
+    (event: React.PointerEvent, entry: OverlayTarget, mode: 'move' | 'resize') => {
+      if (entry.locked) return
       event.stopPropagation()
       event.preventDefault()
       ;(event.target as Element).setPointerCapture(event.pointerId)
 
-      selectItem(zone, item.id)
+      selectItem(entry.zone, entry.id)
       // One undo step for the whole drag, not one per mouse move.
       beginGesture()
       dragRef.current = {
-        itemId: item.id,
-        zone,
+        itemId: entry.id,
+        zone: entry.zone,
         mode,
+        target: entry.target,
         startX: event.clientX,
         startY: event.clientY,
-        origin: { x: item.x, y: item.y, w: item.w, h: item.h },
+        origin: { ...entry.origin },
       }
     },
     [beginGesture, selectItem],
@@ -119,7 +162,23 @@ export const Canvas = ({ page }: { page: Page | null }) => {
 
       touch((draft) => {
         const entry = draft.templates.find((t) => t.id === activeTemplateId)
-        const item = entry?.template.zones[drag.zone].items.find((i) => i.id === drag.itemId)
+        if (!entry) return
+        const zone = entry.template.zones[drag.zone]
+
+        if (drag.target === 'pictogram') {
+          if (drag.mode === 'move') {
+            // Nudges, not absolute positions, and deliberately unclamped: the
+            // mark is allowed outside the band and past the page margin.
+            zone.pictogram.offsetX = round(drag.origin.x + dx)
+            zone.pictogram.offsetY = round(drag.origin.y + dy)
+          } else {
+            // Square, so the larger of the two directions wins.
+            zone.pictogram.size = Math.max(MIN_ITEM, round(drag.origin.w + Math.max(dx, dy)))
+          }
+          return
+        }
+
+        const item = zone.items.find((i) => i.id === drag.itemId)
         if (!item) return
 
         if (drag.mode === 'move') {
@@ -177,26 +236,27 @@ export const Canvas = ({ page }: { page: Page | null }) => {
         >
           <div className="sheet-svg" dangerouslySetInnerHTML={{ __html: svg }} />
 
-          {overlayItems.map(({ zone, item, rect }) => {
-            const active = selection.itemId === item.id
+          {overlayItems.map((entry) => {
+            const active = selection.itemId === entry.id
+            const { rect } = entry
             return (
               <div
-                key={item.id}
-                className={`overlay-item${active ? ' is-selected' : ''}${item.locked ? ' is-locked' : ''}`}
+                key={entry.id}
+                className={
+                  `overlay-item${active ? ' is-selected' : ''}${entry.locked ? ' is-locked' : ''}` +
+                  `${entry.target === 'pictogram' ? ' is-pictogram' : ''}`
+                }
                 style={{
                   left: (rect.x + bleed) * pxPerMm,
                   top: (rect.y + bleed) * pxPerMm,
                   width: rect.w * pxPerMm,
                   height: rect.h * pxPerMm,
                 }}
-                onPointerDown={(e) => onPointerDown(e, zone, item, 'move')}
-                title={item.kind === 'text' ? item.text : item.kind}
+                onPointerDown={(e) => onPointerDown(e, entry, 'move')}
+                title={entry.title}
               >
-                {active && !item.locked ? (
-                  <span
-                    className="overlay-handle"
-                    onPointerDown={(e) => onPointerDown(e, zone, item, 'resize')}
-                  />
+                {active && !entry.locked ? (
+                  <span className="overlay-handle" onPointerDown={(e) => onPointerDown(e, entry, 'resize')} />
                 ) : null}
               </div>
             )

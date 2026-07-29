@@ -91,12 +91,33 @@ export interface LayoutDiagnostics {
   blockCount: number
 }
 
+/**
+ * Something the layout placed by its own rules that the editor still has to
+ * offer a grip on.
+ *
+ * The pictogram is positioned against the measured height of the text beside
+ * it, so the canvas cannot work out where it landed without redoing the
+ * layout. Handing the box back means the thing being dragged is exactly the
+ * thing that was drawn.
+ */
+export interface LayoutHandle {
+  id: string
+  zone: 'header' | 'footer'
+  kind: 'pictogram'
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export interface Page {
   /** Trim size in millimetres. */
   width: number
   height: number
   bleed: number
   primitives: Primitive[]
+  /** Boxes the editor can offer handles for. Empty for a plain render. */
+  handles: LayoutHandle[]
   diagnostics: LayoutDiagnostics
 }
 

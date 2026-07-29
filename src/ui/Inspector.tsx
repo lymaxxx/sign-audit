@@ -440,6 +440,33 @@ const ZonesPanel = () => {
                 />
               </Field>
               <Row>
+                <Field label="Nudge across" hint="negative reaches outside the margin">
+                  <NumberInput
+                    value={t.zones[zone].pictogram.offsetX}
+                    step={0.5}
+                    suffix="mm"
+                    onChange={(v) => edit('Pictogram', (tpl) => void (tpl.zones[zone].pictogram.offsetX = v))}
+                  />
+                </Field>
+                <Field label="Nudge down">
+                  <NumberInput
+                    value={t.zones[zone].pictogram.offsetY}
+                    step={0.5}
+                    suffix="mm"
+                    onChange={(v) => edit('Pictogram', (tpl) => void (tpl.zones[zone].pictogram.offsetY = v))}
+                  />
+                </Field>
+              </Row>
+              <Toggle
+                label="Wrap the text around it"
+                value={t.zones[zone].pictogram.wrapText}
+                onChange={(v) => edit('Pictogram', (tpl) => void (tpl.zones[zone].pictogram.wrapText = v))}
+              />
+              <p className="readout">
+                Drag the mark on the sheet to nudge it, or its corner to resize. Wrapping indents only the
+                lines it actually sits beside; off, every line is indented.
+              </p>
+              <Row>
                 <Button variant="ghost" onClick={() => void loadPictogram(zone, edit)}>
                   {t.zones[zone].pictogram.source ? 'Replace artwork…' : 'Choose artwork…'}
                 </Button>

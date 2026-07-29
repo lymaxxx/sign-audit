@@ -211,6 +211,16 @@ export interface ZoneConfig {
     gap: number
     /** Against the top of the text block, its middle, or its baseline row. */
     align: 'top' | 'middle' | 'bottom'
+    /** Nudge from where the alignment puts it, in mm. Negative values are
+     *  allowed and are not clipped, so the mark can hang outside the page
+     *  margins — which is the only way to optically centre a round badge
+     *  against a text block that starts at the margin. */
+    offsetX: number
+    offsetY: number
+    /** Indent only the lines the mark actually sits beside, letting the ones
+     *  below it run the full width. Off, every line is indented, which is the
+     *  older behaviour and still what a short title wants. */
+    wrapText: boolean
   }
   items: VectorItem[]
 }
