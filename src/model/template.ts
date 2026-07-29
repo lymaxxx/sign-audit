@@ -271,6 +271,12 @@ export interface BlockConfig {
   showColumnHeaders: boolean
   /** Times per row in a flat departure list; `auto` fits as many as will go. */
   timesPerRow: 'auto' | number
+  /** How many columns a departure list or hour grid may split into inside one
+   *  cell. A wide panel otherwise leaves most of the cell empty while the
+   *  block grows tall enough to shrink the whole sheet. 1 turns it off. */
+  maxCellColumns: number
+  /** Space between those columns, in mm at the reference block width. */
+  cellColumnGap: number
   padding: Insets
   /** Wording of the left-hand row labels. `{from}` and `{to}` carry the hours
    *  of a headway stretch. */

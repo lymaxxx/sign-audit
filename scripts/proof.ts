@@ -109,6 +109,29 @@ const cases: Case[] = [
     },
   },
   {
+    id: 'grid-columns',
+    label: 'Full-width blocks, headway ceiling below the service — grids split across the width',
+    apply: (t) => {
+      t.artboard.width = 300
+      t.artboard.height = 500
+      t.flow.columns = 1
+      // Forces the day into hour grids rather than quoted headways, which is
+      // the case that used to run down one narrow column of a wide cell.
+      t.rules.maxHeadwayForInterval = 20
+    },
+  },
+  {
+    id: 'grid-single-column',
+    label: 'The same sheet with grid columns turned off, for comparison',
+    apply: (t) => {
+      t.artboard.width = 300
+      t.artboard.height = 500
+      t.flow.columns = 1
+      t.rules.maxHeadwayForInterval = 20
+      t.block.maxCellColumns = 1
+    },
+  },
+  {
     id: 'tall-bigfooter',
     label: 'Tall panel with a 90mm footer — content must clear it',
     apply: (t) => {

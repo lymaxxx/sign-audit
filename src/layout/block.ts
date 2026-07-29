@@ -124,6 +124,14 @@ const HOUR_GAP_EM = 0.5
 /** Gap between minutes within an hour. */
 const MINUTE_GAP_EM = 0.45
 
+/**
+ * How many departures a flat list puts on one line.
+ *
+ * A flat list is already its own answer to using the cell's width — it wraps
+ * left to right across the whole of it, so there is nothing here for
+ * `maxCellColumns` to cap. That setting governs the hour grid, where a
+ * repeated hour-and-minutes block is what gets dealt into columns.
+ */
 const timesPerRow = (ctx: LayoutContext, cellWidth: number, itemWidth: number, gap: number): number => {
   const configured = ctx.tpl.block.timesPerRow
   if (configured !== 'auto') return Math.max(1, configured)
@@ -155,6 +163,44 @@ const timesCell = (ctx: LayoutContext, times: Minutes[], x: number, y: number, w
   return { height: Math.ceil(times.length / perRow) * lineH, prims }
 }
 
+/**
+ * Deal a run of hours into `count` columns, balanced by the number of lines
+ * each takes, and read down a column before moving to the next.
+ *
+ * Balancing by line count rather than by hour count matters: an hour with six
+ * departures wraps onto two lines, and splitting purely by hour would leave
+ * one column visibly longer than its neighbour.
+ */
+const dealIntoCellColumns = <T>(items: T[], linesOf: (item: T) => number, count: number): T[][] => {
+  if (count <= 1 || items.length === 0) return [items]
+
+  // A ceiling share, not an average: filling each column to the average and
+  // letting the remainder fall through leaves the last column carrying
+  // everything the rounding shed, which is how four columns ended up taller
+  // than three.
+  const total = items.reduce((sum, item) => sum + linesOf(item), 0)
+  const perColumn = Math.ceil(total / count)
+
+  const groups: T[][] = [[]]
+  let used = 0
+
+  for (const item of items) {
+    const lines = linesOf(item)
+    const current = groups[groups.length - 1]!
+    const onLastColumn = groups.length === count
+    const wouldOverfill = current.length > 0 && used + lines > perColumn
+
+    if (wouldOverfill && !onLastColumn) {
+      groups.push([item])
+      used = lines
+      continue
+    }
+    current.push(item)
+    used += lines
+  }
+  return groups
+}
+
 /** Departures grouped by hour: a heavy hour against light minutes. */
 const hourlyCell = (ctx: LayoutContext, times: Minutes[], x: number, y: number, w: number): Box => {
   if (times.length === 0) return EMPTY
@@ -177,10 +223,6 @@ const hourlyCell = (ctx: LayoutContext, times: Minutes[], x: number, y: number, 
     ctx.book.baselineOffset(minuteStyle, ctx.scale),
   )
 
-  const minutesLeft = x + hourW + hourGap
-  const minutesWidth = Math.max(minuteW, w - hourW - hourGap)
-  const perRow = Math.max(1, Math.floor((minutesWidth + minuteGap) / (minuteW + minuteGap)))
-
   const byHour = new Map<number, Minutes[]>()
   for (const t of times) {
     const h = hourOf(t)
@@ -188,32 +230,55 @@ const hourlyCell = (ctx: LayoutContext, times: Minutes[], x: number, y: number, 
     if (list) list.push(t)
     else byHour.set(h, [t])
   }
+  const hours = [...byHour.entries()].sort((a, b) => a[0] - b[0])
+
+  // How many minutes the busiest hour has to show. Sizing a column against
+  // that keeps every hour on one line where the cell can afford it, which is
+  // what makes the leftover width worth spending on another column.
+  const busiest = Math.max(...hours.map(([, list]) => list.length))
+  const roomForMinutes = Math.max(minuteW, w - hourW - hourGap)
+  const fitsAcross = Math.max(1, Math.floor((roomForMinutes + minuteGap) / (minuteW + minuteGap)))
+  const perRow = Math.min(busiest, fitsAcross)
+
+  const columnW = hourW + hourGap + perRow * (minuteW + minuteGap) - minuteGap
+  const columnGap = s(ctx, ctx.tpl.block.cellColumnGap)
+  const cap = Math.max(1, Math.round(ctx.tpl.block.maxCellColumns))
+  const columns = Math.max(
+    1,
+    Math.min(cap, hours.length, Math.floor((w + columnGap) / (columnW + columnGap))),
+  )
+
+  const linesOf = ([, list]: [number, Minutes[]]) => Math.ceil(list.length / perRow)
+  const groups = dealIntoCellColumns(hours, linesOf, columns)
 
   const prims: Primitive[] = []
-  let cursorY = y
+  let tallest = 0
 
-  for (const [hour, list] of [...byHour.entries()].sort((a, b) => a[0] - b[0])) {
-    const wrapped = Math.ceil(list.length / perRow)
-    prims.push(
-      ...text(ctx, formatHour(hour * 60, opts), 'hour', x, cursorY + baseline),
-    )
-    list.forEach((t, i) => {
-      const col = i % perRow
-      const row = Math.floor(i / perRow)
-      prims.push(
-        ...text(
-          ctx,
-          formatMinute(t),
-          'minute',
-          minutesLeft + col * (minuteW + minuteGap),
-          cursorY + row * lineH + baseline,
-        ),
-      )
-    })
-    cursorY += wrapped * lineH
-  }
+  groups.forEach((group, columnIndex) => {
+    const left = x + columnIndex * (columnW + columnGap)
+    const minutesLeft = left + hourW + hourGap
+    let cursorY = y
 
-  return { height: cursorY - y, prims }
+    for (const [hour, list] of group) {
+      prims.push(...text(ctx, formatHour(hour * 60, opts), 'hour', left, cursorY + baseline))
+      list.forEach((t, i) => {
+        prims.push(
+          ...text(
+            ctx,
+            formatMinute(t),
+            'minute',
+            minutesLeft + (i % perRow) * (minuteW + minuteGap),
+            cursorY + Math.floor(i / perRow) * lineH + baseline,
+          ),
+        )
+      })
+      cursorY += Math.ceil(list.length / perRow) * lineH
+    }
+
+    tallest = Math.max(tallest, cursorY - y)
+  })
+
+  return { height: tallest, prims }
 }
 
 /** A headway: one large figure, with its unit beneath. */

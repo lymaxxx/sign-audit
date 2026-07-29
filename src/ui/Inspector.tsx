@@ -238,6 +238,25 @@ const FlowPanel = ({ page }: { page: Page | null }) => {
             options={[{ value: 'auto', label: 'Auto' }, ...[1, 2, 3, 4, 5, 6, 8].map((n) => ({ value: String(n), label: String(n) }))]}
           />
         </Field>
+        <Row>
+          <Field label="Hour grid columns" hint="splits a long grid across the cell; 1 keeps one column">
+            <NumberInput
+              value={t.block.maxCellColumns}
+              min={1}
+              max={8}
+              onChange={(v) => edit('Grid columns', (tpl) => void (tpl.block.maxCellColumns = v))}
+            />
+          </Field>
+          <Field label="Between them">
+            <NumberInput
+              value={t.block.cellColumnGap}
+              min={0}
+              step={0.5}
+              suffix="mm"
+              onChange={(v) => edit('Grid columns', (tpl) => void (tpl.block.cellColumnGap = v))}
+            />
+          </Field>
+        </Row>
         <Toggle label="Show street list" value={t.block.showViaList} onChange={(v) => edit('Streets', (tpl) => void (tpl.block.showViaList = v))} />
         <Toggle label="Show day-type headings" value={t.block.showColumnHeaders} onChange={(v) => edit('Headings', (tpl) => void (tpl.block.showColumnHeaders = v))} />
       </Group>

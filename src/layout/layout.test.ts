@@ -2,10 +2,14 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { getFontBook } from './fonts.node'
 import type { FontBook } from './fonts'
 import { layoutSheet } from './index'
+import { layoutRouteBlock } from './block'
+import { buildRows } from './rows'
 import { contentArea } from './zones'
+import { segmentDayTypes } from '../segment'
 import { createDefaultTemplate } from '../model/defaults'
 import { makeDemoTimetable } from '../model/demo'
 import { buildSheetBlocks } from '../model/sheet'
+import { parseTimeList } from '../model/time'
 import type { MasterTemplate } from '../model/template'
 import type { Page } from './primitives'
 
@@ -152,6 +156,75 @@ describe('sheet layout', () => {
       .filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
       .map((p) => p.text)
     expect(texts.some((t) => t.includes('Аврора'))).toBe(true)
+  })
+})
+
+describe('departure grids across the cell width', () => {
+  // A block's nominal width also drives its type size, so a sheet-level
+  // measurement cannot separate "wider cell" from "bigger type". These
+  // measure one block at a fixed scale, where cell width is the only thing
+  // moving.
+  //
+  // The data is a 30-minute service with the headway ceiling set below it, so
+  // it prints as an hour grid rather than being quoted as "every 30" — the
+  // shape that was leaving most of a wide cell empty.
+  const rules = () => ({ ...createDefaultTemplate().rules, maxHeadwayForInterval: 20 })
+
+  const hourly = parseTimeList(
+    Array.from({ length: 15 }, (_, i) => {
+      const h = 7 + i
+      const mins = h < 10 || h > 18 ? [13, 43] : [11, 41]
+      return mins.map((m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`).join(' ')
+    }).join(' '),
+  )
+
+  const route = { id: 'r9', number: '9', mode: '', terminal: 'Rosia', via: [], notes: [] }
+
+  const measure = (cap: number, width: number) => {
+    const tpl = createDefaultTemplate()
+    tpl.rules.maxHeadwayForInterval = 20
+    tpl.block.maxCellColumns = cap
+    const columns = segmentDayTypes([hourly], rules())
+    const input = {
+      route,
+      dayTypes: [{ id: 'd1', label: '' }],
+      rows: buildRows(columns, tpl.block, tpl.rules),
+    }
+    return layoutRouteBlock({ book, tpl, scale: 1 }, input, 0, 0, width)
+  }
+
+  it('reads this service as a grid, not a headway', () => {
+    expect(segmentDayTypes([hourly], rules())[0]!.some((s) => s?.kind === 'hourly')).toBe(true)
+  })
+
+  it('splits an hour grid into columns rather than running it down one', () => {
+    expect(measure(3, 180).height).toBeLessThan(measure(1, 180).height)
+  })
+
+  it('never gets taller by being allowed another column', () => {
+    // Filling each column to the average and letting the remainder fall
+    // through used to leave the last column carrying the rounding, so four
+    // columns came out taller than three.
+    const heights = [1, 2, 3, 4, 5].map((cap) => measure(cap, 300).height)
+    for (let i = 1; i < heights.length; i++) {
+      expect(heights[i]!).toBeLessThanOrEqual(heights[i - 1]! + 0.01)
+    }
+  })
+
+  it('never gets taller by being given more width', () => {
+    const heights = [90, 140, 200, 300].map((w) => measure(4, w).height)
+    for (let i = 1; i < heights.length; i++) {
+      expect(heights[i]!).toBeLessThanOrEqual(heights[i - 1]! + 0.01)
+    }
+  })
+
+  it('keeps every departure when the grid splits', () => {
+    const texts = (cap: number) =>
+      measure(cap, 300)
+        .prims.filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
+        .map((p) => p.text)
+        .sort()
+    expect(texts(3)).toEqual(texts(1))
   })
 })
 

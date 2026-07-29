@@ -113,6 +113,8 @@ export const defaultBlock = (): BlockConfig => ({
   showViaList: true,
   showColumnHeaders: true,
   timesPerRow: 'auto',
+  maxCellColumns: 3,
+  cellColumnGap: 5,
   padding: insets(0),
   labels: {
     firstTrips: 'First departures',
