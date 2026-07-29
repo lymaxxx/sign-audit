@@ -8,6 +8,7 @@ import { renderSvg, cssFamily } from '../src/render/svg'
 import { createDefaultTemplate } from '../src/model/defaults'
 import { makeDemoTimetable } from '../src/model/demo'
 import { buildSheetBlocks } from '../src/model/sheet'
+import { createInsert, type ContentInsert } from '../src/model/inserts'
 import type { MasterTemplate } from '../src/model/template'
 
 /**
@@ -38,7 +39,20 @@ interface Case {
   id: string
   label: string
   apply: (t: MasterTemplate) => void
+  /** Shared blocks to set above the footer, if the case is about those. */
+  inserts?: ContentInsert[]
 }
+
+/** A flat panel of colour, standing in for real fares or advert artwork. */
+const panel = (id: string, name: string, fill: string, width: number, height: number): ContentInsert => ({
+  ...createInsert(id, name),
+  width,
+  height,
+  priority: id === 'advert' ? 1 : 0,
+  // Drawn at the block's own aspect ratio: artwork is fitted inside its box,
+  // so a square stand-in would letterbox and misrepresent the band.
+  fallback: { source: `<rect x="0" y="0" width="${width * 4}" height="${height * 4}" fill="${fill}"/>`, format: 'svg' },
+})
 
 const cases: Case[] = [
   {
@@ -107,6 +121,25 @@ const cases: Case[] = [
       t.artboard.height = 297
       t.flow.columns = 3
     },
+  },
+  {
+    id: 'blocks-band',
+    label: 'Two shared blocks side by side above the footer',
+    apply: (t) => {
+      t.artboard.width = 210
+      t.artboard.height = 297
+    },
+    inserts: [panel('fares', 'Fares', '#1f6feb', 88, 30), panel('advert', 'Advert', '#d4d4d8', 88, 30)],
+  },
+  {
+    id: 'blocks-dropped',
+    label: 'The same two on a sheet too short for both — the advert goes first',
+    apply: (t) => {
+      t.artboard.width = 210
+      t.artboard.height = 280
+      t.flow.minScale = 0.95
+    },
+    inserts: [panel('fares', 'Fares', '#1f6feb', 200, 30), panel('advert', 'Advert', '#d4d4d8', 200, 30)],
   },
   {
     id: 'pictogram-wrap',
@@ -182,7 +215,13 @@ const run = async () => {
 
     const blocks = buildSheetBlocks(timetable, stopId, tpl)
     const stop = timetable.stops.find((s) => s.id === stopId)!
-    const page = layoutSheet(book, tpl, { stop, blocks, date: '1 Jan 2026' })
+    const page = layoutSheet(book, tpl, {
+      stop,
+      blocks,
+      date: '1 Jan 2026',
+      inserts: c.inserts ?? [],
+      templateId: 'proof',
+    })
     const d = page.diagnostics
 
     // Fonts live in one sidecar stylesheet rather than inside every sheet;

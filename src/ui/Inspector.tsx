@@ -16,6 +16,7 @@ const TABS: Array<{ id: InspectorTab; label: string }> = [
   { id: 'colour', label: 'Colour' },
   { id: 'rules', label: 'Rules' },
   { id: 'templates', label: 'Templates' },
+  { id: 'blocks', label: 'Blocks' },
   { id: 'stop', label: 'This stop' },
 ]
 
@@ -519,25 +520,28 @@ const ZonesPanel = () => {
 }
 
 /** Load a mark for the pictogram slot. */
+/** Ask for an image and read it into the form the layout draws from. */
+const pickArtwork = async (): Promise<{ source: string; format: 'svg' | 'raster' } | null> => {
+  const { openFiles } = await import('../platform')
+  const files = await openFiles([{ name: 'Artwork', extensions: ['svg', 'png', 'jpg', 'jpeg'] }])
+  const file = files[0]
+  if (!file) return null
+
+  return file.name.toLowerCase().endsWith('.svg')
+    ? { source: unwrapSvg(new TextDecoder().decode(file.bytes)), format: 'svg' }
+    : { source: toDataUri(file.name, file.bytes), format: 'raster' }
+}
+
 const loadPictogram = async (
   zone: ZoneId,
   edit: (label: string, mutate: (t: MasterTemplate) => void) => void,
 ): Promise<void> => {
-  const { openFiles } = await import('../platform')
-  const files = await openFiles([{ name: 'Artwork', extensions: ['svg', 'png', 'jpg', 'jpeg'] }])
-  const file = files[0]
-  if (!file) return
-
-  const isSvg = file.name.toLowerCase().endsWith('.svg')
+  const artwork = await pickArtwork()
+  if (!artwork) return
   edit('Pictogram', (tpl) => {
     const p = tpl.zones[zone].pictogram
-    if (isSvg) {
-      p.source = unwrapSvg(new TextDecoder().decode(file.bytes))
-      p.format = 'svg'
-    } else {
-      p.source = toDataUri(file.name, file.bytes)
-      p.format = 'raster'
-    }
+    p.source = artwork.source
+    p.format = artwork.format
   })
 }
 
@@ -1042,6 +1046,166 @@ const TemplatesPanel = () => {
   )
 }
 
+/**
+ * Blocks of fixed content that go on every sheet.
+ *
+ * They belong to the project, not to a template, because one definition has
+ * to reach every stop — but each carries artwork per template, so the same
+ * fares panel can be set differently on a tall shelter than on a square one.
+ */
+const BlocksPanel = () => {
+  const inserts = useStore((s) => s.project.inserts)
+  const templates = useStore((s) => s.project.templates)
+  const activeTemplateId = useStore((s) => s.activeTemplateId)
+  const t = useActiveTemplate()
+  const edit = useTemplateEdit()
+  const addInsert = useStore((s) => s.addInsert)
+  const updateInsert = useStore((s) => s.updateInsert)
+  const removeInsert = useStore((s) => s.removeInsert)
+  const moveInsert = useStore((s) => s.moveInsert)
+  const setInsertArtwork = useStore((s) => s.setInsertArtwork)
+
+  const activeName = templates.find((x) => x.id === activeTemplateId)?.name ?? 'this template'
+
+  return (
+    <>
+      <Group title={`${inserts.length} block${inserts.length === 1 ? '' : 's'}`}>
+        <p className="readout">
+          Fixed content set above the footer on every sheet — fares, a map, an advert. The schedule shrinks
+          to make room. When a sheet still will not fit, the block lowest in this list is dropped first.
+        </p>
+        <Button onClick={() => addInsert('New block')}>+ New block</Button>
+      </Group>
+
+      <Group title="Spacing on this template">
+        <Row>
+          <Field label="Above the band">
+            <NumberInput
+              value={t.insertBand.gapAbove}
+              min={0}
+              suffix="mm"
+              onChange={(v) => edit('Blocks', (tpl) => void (tpl.insertBand.gapAbove = v))}
+            />
+          </Field>
+          <Field label="Below it">
+            <NumberInput
+              value={t.insertBand.gapBelow}
+              min={0}
+              suffix="mm"
+              onChange={(v) => edit('Blocks', (tpl) => void (tpl.insertBand.gapBelow = v))}
+            />
+          </Field>
+        </Row>
+        <Field label="Between blocks">
+          <NumberInput
+            value={t.insertBand.gap}
+            min={0}
+            suffix="mm"
+            onChange={(v) => edit('Blocks', (tpl) => void (tpl.insertBand.gap = v))}
+          />
+        </Field>
+        <Toggle
+          label="Stretch a row's blocks to fill the width"
+          value={t.insertBand.stretch}
+          onChange={(v) => edit('Blocks', (tpl) => void (tpl.insertBand.stretch = v))}
+        />
+      </Group>
+
+      {inserts.map((insert, index) => {
+        const own = insert.variants[activeTemplateId]
+        return (
+          <Group key={insert.id} title={insert.name || 'Untitled block'}>
+            <Field label="Name">
+              <TextInput value={insert.name} onChange={(v) => updateInsert(insert.id, (b) => void (b.name = v))} />
+            </Field>
+            <Row>
+              <Field label="Width" hint="drives how many sit side by side">
+                <NumberInput
+                  value={insert.width}
+                  min={5}
+                  suffix="mm"
+                  onChange={(v) => updateInsert(insert.id, (b) => void (b.width = v))}
+                />
+              </Field>
+              <Field label="Height">
+                <NumberInput
+                  value={insert.height}
+                  min={5}
+                  suffix="mm"
+                  onChange={(v) => updateInsert(insert.id, (b) => void (b.height = v))}
+                />
+              </Field>
+            </Row>
+            <Toggle
+              label="Show on sheets"
+              value={insert.enabled}
+              onChange={(v) => updateInsert(insert.id, (b) => void (b.enabled = v))}
+            />
+
+            <Row>
+              <Button variant="ghost" disabled={index === 0} onClick={() => moveInsert(insert.id, -1)}>
+                ↑ Keep longer
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={index === inserts.length - 1}
+                onClick={() => moveInsert(insert.id, 1)}
+              >
+                ↓ Drop sooner
+              </Button>
+            </Row>
+
+            {/* Not wrapped in a Field: that renders a <label>, and a label
+                around a button is the wrong element for a control that opens
+                a dialog rather than editing a value. */}
+            <p className="control-label">
+              Artwork everywhere
+              {insert.fallback?.source ? null : <em className="field-hint">none yet</em>}
+            </p>
+            <Row>
+              <Button
+                variant="ghost"
+                onClick={() => void pickArtwork().then((a) => a && setInsertArtwork(insert.id, null, a))}
+              >
+                {insert.fallback?.source ? 'Replace…' : 'Choose…'}
+              </Button>
+              {insert.fallback?.source ? (
+                <Button variant="danger" onClick={() => setInsertArtwork(insert.id, null, null)}>
+                  Clear
+                </Button>
+              ) : null}
+            </Row>
+
+            <p className="control-label">
+              Instead, on {activeName}
+              <em className="field-hint">{own?.source ? 'overrides the one above' : 'uses the one above'}</em>
+            </p>
+            <Row>
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  void pickArtwork().then((a) => a && setInsertArtwork(insert.id, activeTemplateId, a))
+                }
+              >
+                {own?.source ? 'Replace…' : 'Choose…'}
+              </Button>
+              {own?.source ? (
+                <Button variant="danger" onClick={() => setInsertArtwork(insert.id, activeTemplateId, null)}>
+                  Clear
+                </Button>
+              ) : null}
+            </Row>
+
+            <Button variant="danger" onClick={() => removeInsert(insert.id)}>
+              Delete block
+            </Button>
+          </Group>
+        )
+      })}
+    </>
+  )
+}
+
 const StopPanel = () => {
   const stopId = useStore((s) => s.selection.stopId)
   const stops = useStore((s) => s.project.timetable.stops)
@@ -1151,6 +1315,7 @@ export const Inspector = ({ page }: { page: Page | null }) => {
         {tab === 'colour' ? <ColourPanel /> : null}
         {tab === 'rules' ? <RulesPanel /> : null}
         {tab === 'templates' ? <TemplatesPanel /> : null}
+        {tab === 'blocks' ? <BlocksPanel /> : null}
         {tab === 'stop' ? <StopPanel /> : null}
       </div>
     </aside>

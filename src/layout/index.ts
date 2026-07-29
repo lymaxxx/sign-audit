@@ -5,6 +5,14 @@ import { contentArea, layoutZone, substituteTokens, zoneRect, type TokenValues }
 import type { Page, Primitive } from './primitives'
 import type { Rect } from '../model/units'
 import type { MasterTemplate } from '../model/template'
+import {
+  artworkFor,
+  byDroppingOrder,
+  packInserts,
+  placeInserts,
+  type ContentInsert,
+} from '../model/inserts'
+import { drawArtwork } from './zones'
 import { routeLabel, type Stop } from '../model/types'
 
 export * from './primitives'
@@ -24,6 +32,11 @@ export interface SheetInput {
   /** Overrides the template's title wording for this stop alone. */
   titleOverride?: string
   subtitleOverride?: string
+  /** Shared blocks to set above the footer. Project-level, so they arrive
+   *  here rather than coming off the template. */
+  inserts?: ContentInsert[]
+  /** Which template's artwork the blocks should show. */
+  templateId?: string
 }
 
 const buildTokens = (input: SheetInput, tpl: MasterTemplate): TokenValues => {
@@ -248,10 +261,30 @@ export const layoutSheet = (book: FontBook, tpl: MasterTemplate, input: SheetInp
   const { artboard, zones } = tpl
   const ctx: LayoutContext = { book, tpl, scale: 1 }
   const tokens = buildTokens(input, tpl)
+  const band = tpl.insertBand
 
-  const area = contentArea(artboard, artboard.margins, zones.header, zones.footer)
-  const fitted = layoutBlocks(ctx, input.blocks, area)
+  const contentW = Math.max(0, artboard.width - artboard.margins.left - artboard.margins.right)
+  const wanted = (input.inserts ?? []).filter((i) => i.enabled)
 
+  /** The sheet as it comes out with a given set of blocks kept. */
+  const attempt = (kept: ContentInsert[]) => {
+    const packing = packInserts(kept, contentW, band.gap)
+    const space = packing.height > 0 ? packing.height + band.gapAbove + band.gapBelow : 0
+    const area = contentArea(artboard, artboard.margins, zones.header, zones.footer, space)
+    return { kept, packing, space, area, fitted: layoutBlocks(ctx, input.blocks, area) }
+  }
+
+  // Least important first, so dropping one at a time takes the advert before
+  // it takes the fares. A block only goes when the schedule genuinely cannot
+  // be made to fit around it.
+  const droppable = byDroppingOrder(wanted)
+  let result = attempt(wanted)
+  for (let dropped = 1; result.fitted.overflow && dropped <= droppable.length; dropped++) {
+    const gone = new Set(droppable.slice(0, dropped).map((i) => i.id))
+    result = attempt(wanted.filter((i) => !gone.has(i.id)))
+  }
+
+  const { area, fitted, packing, space } = result
   const prims: Primitive[] = []
 
   if (tpl.palette.paper !== 'none') {
@@ -284,6 +317,24 @@ export const layoutSheet = (book: FontBook, tpl: MasterTemplate, input: SheetInp
 
   prims.push(...header.prims)
   prims.push(...fitted.prims)
+
+  // The band sits directly above the footer, filling the space the content
+  // area gave up for it, so raising a block's height pushes the schedule up
+  // rather than crowding the footer.
+  if (space > 0) {
+    const bandTop = area.y + area.h + band.gapAbove
+    for (const { insert, rect } of placeInserts(
+      result.kept,
+      packing,
+      { x: area.x, y: bandTop, w: area.w },
+      band.gap,
+      band.stretch,
+    )) {
+      const artwork = artworkFor(insert, input.templateId ?? '')
+      if (artwork) prims.push(...drawArtwork(artwork.source, artwork.format, rect))
+    }
+  }
+
   prims.push(...footer.prims)
 
   if (artboard.cropMarks) {

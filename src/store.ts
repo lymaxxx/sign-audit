@@ -4,6 +4,7 @@ import { createDefaultTemplate } from './model/defaults'
 import { emptyTimetable, type Route, type Timetable } from './model/types'
 import { makeDemoTimetable } from './model/demo'
 import type { StopEdits } from './model/sheet'
+import { createInsert, type ContentInsert, type InsertArtwork } from './model/inserts'
 import type { ImportIssue } from './import/types'
 
 /**
@@ -27,6 +28,10 @@ export interface Project {
   templates: NamedTemplate[]
   /** Which one a stop uses when it does not say otherwise. */
   defaultTemplateId: string
+  /** Shared blocks set above the footer on every sheet — fares, a map, an
+   *  advert. Project-level because one definition reaches every stop; the
+   *  artwork inside each can still differ per template. */
+  inserts: ContentInsert[]
   edits: Record<string, StopEdits>
 }
 
@@ -123,6 +128,17 @@ export interface AppState {
   /** Unset to fall back to the project default. */
   assignStopTemplate: (stopId: string, templateId: string | null) => void
 
+  /** A shared block set above the footer on every sheet. Returns its id. */
+  addInsert: (name: string) => string
+  updateInsert: (id: string, mutate: (insert: ContentInsert) => void) => void
+  removeInsert: (id: string) => void
+  /** Move a block up or down the drop order — the last one listed is the
+   *  first to go when a sheet runs out of room. */
+  moveInsert: (id: string, delta: number) => void
+  /** Artwork for one template, or the fallback every template without its own
+   *  falls back to. Pass null to clear. */
+  setInsertArtwork: (id: string, templateId: string | null, artwork: InsertArtwork | null) => void
+
   editsFor: (stopId: string) => StopEdits
   updateEdits: (stopId: string, mutate: (edits: StopEdits) => void) => void
   addZoneItem: (zone: ZoneId, item: VectorItem) => void
@@ -142,6 +158,7 @@ export type InspectorTab =
   | 'colour'
   | 'rules'
   | 'templates'
+  | 'blocks'
   | 'stop'
 
 export type SidebarTab = 'stops' | 'routes'
@@ -162,6 +179,7 @@ const clone = (project: Project): Project => ({
   timetable: project.timetable,
   templates: project.templates.map((t) => ({ ...t, template: structuredClone(t.template) })),
   defaultTemplateId: project.defaultTemplateId,
+  inserts: structuredClone(project.inserts),
   edits: structuredClone(project.edits),
 })
 
@@ -172,6 +190,7 @@ const singleTemplateProject = (name: string, timetable: Timetable): Project => {
     timetable,
     templates: [{ id, name: 'Default', template: createDefaultTemplate() }],
     defaultTemplateId: id,
+    inserts: [],
     edits: {},
   }
 }
@@ -383,6 +402,57 @@ export const useStore = create<AppState>((set, get) => ({
       draft.edits[stopId] ??= {}
       if (templateId) draft.edits[stopId]!.templateId = templateId
       else delete draft.edits[stopId]!.templateId
+    }),
+
+  addInsert: (name) => {
+    const id = randomId('insert')
+    get().commit('New block', (draft) => {
+      const insert = createInsert(id, name)
+      // Newest is least important, so it is the first to be dropped.
+      insert.priority = Math.max(0, ...draft.inserts.map((i) => i.priority + 1))
+      draft.inserts.push(insert)
+    })
+    return id
+  },
+
+  updateInsert: (id, mutate) =>
+    get().commit('Edit block', (draft) => {
+      const insert = draft.inserts.find((i) => i.id === id)
+      if (insert) mutate(insert)
+    }),
+
+  removeInsert: (id) =>
+    get().commit('Remove block', (draft) => {
+      draft.inserts = draft.inserts.filter((i) => i.id !== id)
+    }),
+
+  moveInsert: (id, delta) =>
+    get().commit('Reorder blocks', (draft) => {
+      const from = draft.inserts.findIndex((i) => i.id === id)
+      if (from < 0) return
+      const to = from + delta
+      if (to < 0 || to >= draft.inserts.length) return
+
+      const list = [...draft.inserts]
+      const [moved] = list.splice(from, 1)
+      list.splice(to, 0, moved!)
+      // Priority is the drop order, so it follows the list rather than being
+      // carried around with each block.
+      draft.inserts = list.map((insert, index) => ({ ...insert, priority: index }))
+    }),
+
+  setInsertArtwork: (id, templateId, artwork) =>
+    get().commit('Block artwork', (draft) => {
+      const insert = draft.inserts.find((i) => i.id === id)
+      if (!insert) return
+
+      if (templateId === null) {
+        if (artwork) insert.fallback = artwork
+        else delete insert.fallback
+        return
+      }
+      if (artwork) insert.variants[templateId] = artwork
+      else delete insert.variants[templateId]
     }),
 
   editsFor: (stopId) => get().project.edits[stopId] ?? {},

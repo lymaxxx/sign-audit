@@ -541,11 +541,18 @@ select {
   margin-bottom: 8px;
 }
 
-.field-label {
+.field-label,
+/* The same caption, for a control that opens a dialog rather than editing a
+   value — where a <label> would be the wrong element to wrap it in. */
+.control-label {
   display: block;
   margin-bottom: 3px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.control-label {
+  margin-top: 8px;
 }
 
 .field-hint {

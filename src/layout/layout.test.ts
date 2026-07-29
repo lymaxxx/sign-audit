@@ -10,6 +10,7 @@ import { createDefaultTemplate } from '../model/defaults'
 import { makeDemoTimetable } from '../model/demo'
 import { buildSheetBlocks } from '../model/sheet'
 import { parseTimeList } from '../model/time'
+import { artworkFor, createInsert, packInserts, type ContentInsert } from '../model/inserts'
 import type { MasterTemplate } from '../model/template'
 import type { Page } from './primitives'
 
@@ -225,6 +226,121 @@ describe('departure grids across the cell width', () => {
         .map((p) => p.text)
         .sort()
     expect(texts(3)).toEqual(texts(1))
+  })
+})
+
+describe('shared content blocks', () => {
+  const ART = '<path d="M0 0 H10 V10 H0 Z" fill="#e8402a"/>'
+
+  const block = (over: Partial<ContentInsert> = {}): ContentInsert => ({
+    ...createInsert(over.id ?? 'b1', over.name ?? 'Fares'),
+    fallback: { source: ART, format: 'svg' },
+    ...over,
+  })
+
+  const sheet2 = (inserts: ContentInsert[], tune: (t: MasterTemplate) => void = () => {}): Page => {
+    const tpl = createDefaultTemplate()
+    tune(tpl)
+    const blocks = buildSheetBlocks(timetable, 's1', tpl)
+    const stop = timetable.stops.find((s) => s.id === 's1')!
+    return layoutSheet(book, tpl, { stop, blocks, date: '1 Jan 2026', inserts, templateId: 'tpl' })
+  }
+
+  it('takes its height out of the schedule rather than drawing over it', () => {
+    const without = sheet2([])
+    const withOne = sheet2([block({ height: 40 })])
+    expect(withOne.diagnostics.availableHeight).toBeLessThan(without.diagnostics.availableHeight)
+    expect(without.diagnostics.availableHeight - withOne.diagnostics.availableHeight).toBeGreaterThanOrEqual(40)
+  })
+
+  it('leaves the sheet alone when it has none', () => {
+    expect(sheet2([]).diagnostics.availableHeight).toBe(
+      sheet2([block({ enabled: false })]).diagnostics.availableHeight,
+    )
+  })
+
+  it('puts blocks side by side when the width allows, and wraps when it does not', () => {
+    const wide = packInserts([block({ width: 60 }), block({ id: 'b2', width: 60 })], 186, 5)
+    expect(wide.rows).toHaveLength(1)
+
+    const narrow = packInserts([block({ width: 120 }), block({ id: 'b2', width: 120 })], 186, 5)
+    expect(narrow.rows).toHaveLength(2)
+    expect(narrow.height).toBeGreaterThan(wide.height)
+  })
+
+  it('draws the artwork above the footer and below the schedule', () => {
+    const page = sheet2([block({ height: 30 })])
+    const art = page.primitives.filter((p) => p.type === 'path')
+    expect(art.length).toBeGreaterThan(0)
+
+    const tpl = createDefaultTemplate()
+    const area = contentArea(tpl.artboard, tpl.artboard.margins, tpl.zones.header, tpl.zones.footer, 30 + 14)
+    const footerTop = tpl.artboard.height - tpl.artboard.margins.bottom - tpl.zones.footer.height
+    for (const p of art) {
+      expect(p.y).toBeGreaterThanOrEqual(area.y + area.h)
+      expect(p.y).toBeLessThan(footerTop)
+    }
+  })
+
+  it('drops the least important block before letting the schedule overflow', () => {
+    // Distinct artwork so the survivor can be told apart in the output.
+    const KEEP = 'M0 0 H10 V10 H0 Z'
+    const SHED = 'M1 1 H9 V9 H1 Z'
+    // Full width so the two stack rather than sharing a row — side by side,
+    // dropping one would not shorten the band at all and there would be no
+    // size at which exactly one fits. Modest heights for the same reason:
+    // blocks tall enough to swamp the sheet go from both to neither at once.
+    const keep = block({
+      id: 'keep',
+      name: 'Fares',
+      width: 180,
+      height: 25,
+      priority: 0,
+      fallback: { source: `<path d="${KEEP}"/>`, format: 'svg' },
+    })
+    const shed = block({
+      id: 'shed',
+      name: 'Advert',
+      width: 180,
+      height: 25,
+      priority: 1,
+      fallback: { source: `<path d="${SHED}"/>`, format: 'svg' },
+    })
+
+    const survivors = (height: number) => {
+      const page = sheet2([keep, shed], (t) => {
+        t.artboard.height = height
+        t.flow.minScale = 0.95 // nowhere to shrink out of trouble
+      })
+      const ds = page.primitives
+        .filter((p): p is Extract<typeof p, { type: 'path' }> => p.type === 'path')
+        .map((p) => p.d)
+      return { keep: ds.some((d) => d.includes('H10')), shed: ds.some((d) => d.includes('H9')) }
+    }
+
+    // With room for both, both are on the sheet.
+    expect(survivors(600)).toEqual({ keep: true, shed: true })
+
+    // The invariant that matters, at every size: the advert never outlives the
+    // fares. Squeezing the sheet may drop one or both, but never the wrong one.
+    const seen = new Set<string>()
+    for (let height = 400; height >= 200; height -= 5) {
+      const { keep: k, shed: s } = survivors(height)
+      expect(s && !k).toBe(false)
+      seen.add(`${k}${s}`)
+    }
+    // And it really does shed them one at a time rather than all at once.
+    expect(seen.has('truefalse')).toBe(true)
+  })
+
+  it('shows a template its own artwork, falling back to the shared one', () => {
+    const shared = { source: ART, format: 'svg' as const }
+    const own = { source: '<path d="M0 0 H5 V5 H0 Z"/>', format: 'svg' as const }
+    const insert = block({ fallback: shared, variants: { other: own } })
+
+    expect(artworkFor(insert, 'other')).toBe(own)
+    expect(artworkFor(insert, 'tpl')).toBe(shared)
+    expect(artworkFor(block({ fallback: undefined, variants: {} }), 'tpl')).toBeUndefined()
   })
 })
 

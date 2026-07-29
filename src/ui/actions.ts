@@ -21,10 +21,11 @@ const encoder = new TextEncoder()
 const serialiseProject = (project: Project) =>
   JSON.stringify(
     {
-      version: 2,
+      version: 3,
       name: project.name,
       templates: project.templates,
       defaultTemplateId: project.defaultTemplateId,
+      inserts: project.inserts,
       edits: project.edits,
       timetable: {
         routes: project.timetable.routes,
@@ -65,6 +66,8 @@ const deserialiseProject = (text: string): Project => {
     timetable,
     templates,
     defaultTemplateId,
+    // Files written before shared blocks existed simply have none.
+    inserts: Array.isArray(raw.inserts) ? raw.inserts : [],
     edits: raw.edits ?? {},
   }
 }

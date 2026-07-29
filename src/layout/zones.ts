@@ -44,19 +44,29 @@ export const zoneRect = (
   return { x, y, w, h: zone.height }
 }
 
-/** What is left for the schedule once both bands are taken out. */
+/**
+ * What is left for the schedule once both bands are taken out — and, where
+ * the project has any, the shared content blocks above the footer.
+ *
+ * Subtracting rather than overlaying is what guarantees the schedule never
+ * runs under any of them.
+ */
 export const contentArea = (
   artboard: { width: number; height: number },
   margins: { top: number; right: number; bottom: number; left: number },
   header: ZoneConfig,
   footer: ZoneConfig,
+  insertSpace = 0,
 ): Rect => {
   const x = margins.left
   const w = Math.max(0, artboard.width - margins.left - margins.right)
   const headerSpace = header.height + (header.height > 0 ? header.contentGap : 0)
   const footerSpace = footer.height + (footer.height > 0 ? footer.contentGap : 0)
   const y = margins.top + headerSpace
-  const h = Math.max(0, artboard.height - margins.top - margins.bottom - headerSpace - footerSpace)
+  const h = Math.max(
+    0,
+    artboard.height - margins.top - margins.bottom - headerSpace - footerSpace - insertSpace,
+  )
   return { x, y, w, h }
 }
 
@@ -96,7 +106,7 @@ interface DrawnText {
  * silently — a logo that survives the preview and vanishes from the print is
  * worse than one that never appeared.
  */
-const drawArtwork = (
+export const drawArtwork = (
   source: string,
   format: 'svg' | 'raster',
   box: Rect,

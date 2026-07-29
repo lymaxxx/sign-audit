@@ -11,6 +11,7 @@ const projectWithTemplates = (): Project => ({
     { id: 'b', name: 'B', template: createDefaultTemplate() },
   ],
   defaultTemplateId: 'a',
+  inserts: [],
   edits: {},
 })
 

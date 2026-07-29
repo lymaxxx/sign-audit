@@ -227,6 +227,18 @@ export interface ZoneConfig {
 
 /* --------------------------------------------------------------- template */
 
+/** How the project's shared content blocks are set on this template. */
+export interface InsertBandConfig {
+  /** Space between the schedule and the first block, in mm. */
+  gapAbove: number
+  /** Space between the band and the footer below it. */
+  gapBelow: number
+  /** Space between blocks, across and down. */
+  gap: number
+  /** Share a row's unused width between its blocks. */
+  stretch: boolean
+}
+
 export interface ArtboardConfig {
   width: number
   height: number
@@ -345,6 +357,10 @@ export interface MasterTemplate {
   palette: Palette
   styles: StyleSheet
   rules: SegmentRules
+  /** How the project's shared content blocks are spaced on this template. The
+   *  blocks themselves live on the project; only their setting is per
+   *  template, alongside the per-template artwork each one may carry. */
+  insertBand: InsertBandConfig
 }
 
 /** Resolve a style's colour reference against the palette. */

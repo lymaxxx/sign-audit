@@ -5,7 +5,7 @@ import { cssFamily } from '../render/svg'
 import { layoutSheet, type Page } from '../layout'
 import type { MasterTemplate } from '../model/template'
 import { buildSheetBlocks } from '../model/sheet'
-import { useStore, resolveTemplate } from '../store'
+import { useStore, resolveTemplate, resolveTemplateId } from '../store'
 import type { Project } from '../store'
 
 /**
@@ -68,6 +68,7 @@ export const buildPage = (
   project: Project,
   stopId: string,
   date = todayLabel(),
+  templateId?: string,
 ): Page | null => {
   const stop = project.timetable.stops.find((s) => s.id === stopId)
   if (!stop) return null
@@ -79,6 +80,8 @@ export const buildPage = (
     stop,
     blocks,
     date,
+    inserts: project.inserts,
+    templateId: templateId ?? resolveTemplateId(project, stopId),
     ...(edits.titleOverride !== undefined ? { titleOverride: edits.titleOverride } : {}),
     ...(edits.subtitleOverride !== undefined ? { subtitleOverride: edits.subtitleOverride } : {}),
   })
@@ -100,7 +103,7 @@ export const useCurrentPage = (book: FontBook | null): Page | null => {
   const activeTemplateId = useStore((s) => s.activeTemplateId)
   const deferred = useDeferredValue(project)
 
-  const { timetable, templates, edits } = deferred
+  const { timetable, templates, edits, inserts } = deferred
   const template = templates.find((t) => t.id === activeTemplateId)?.template ?? templates[0]!.template
   const stop = stopId ? timetable.stops.find((s) => s.id === stopId) : undefined
 
@@ -122,10 +125,14 @@ export const useCurrentPage = (book: FontBook | null): Page | null => {
       stop,
       blocks,
       date: todayLabel(),
+      inserts,
+      // The preview follows the template being edited, so the blocks show
+      // that template's artwork rather than the stop's assigned one.
+      templateId: activeTemplateId,
       ...(stopEdits?.titleOverride !== undefined ? { titleOverride: stopEdits.titleOverride } : {}),
       ...(stopEdits?.subtitleOverride !== undefined ? { subtitleOverride: stopEdits.subtitleOverride } : {}),
     })
-  }, [book, template, blocks, stop, stopEdits])
+  }, [book, template, blocks, stop, stopEdits, inserts, activeTemplateId])
 }
 
 /**

@@ -3,6 +3,7 @@ import type {
   BlockConfig,
   FlowConfig,
   FrameStyle,
+  InsertBandConfig,
   MasterTemplate,
   Palette,
   SegmentRules,
@@ -233,6 +234,13 @@ export const defaultFooterZone = (): ZoneConfig => {
   return z
 }
 
+export const defaultInsertBand = (): InsertBandConfig => ({
+  gapAbove: 8,
+  gapBelow: 6,
+  gap: 5,
+  stretch: true,
+})
+
 export interface ArtboardPreset {
   id: string
   label: string
@@ -271,4 +279,5 @@ export const createDefaultTemplate = (): MasterTemplate => ({
   palette: defaultPalette(),
   styles: defaultStyles(),
   rules: defaultRules(),
+  insertBand: defaultInsertBand(),
 })
