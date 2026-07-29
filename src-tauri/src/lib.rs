@@ -65,7 +65,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
     let app_menu = Submenu::with_items(
         app,
-        "Algach",
+        "Timetable Generator",
         true,
         &[
             &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))?,
@@ -92,11 +92,11 @@ pub fn run() {
             app.set_menu(menu)?;
 
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_title("Algach");
+                let _ = window.set_title("Timetable Generator");
             }
             Ok(())
         })
         .on_menu_event(|app, event| emit(app, event.id().as_ref()))
         .run(tauri::generate_context!())
-        .expect("error while running Algach");
+        .expect("error while running Timetable Generator");
 }

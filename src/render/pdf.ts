@@ -210,7 +210,7 @@ export const renderPdf = async (
   if (opts.subject) doc.setSubject(opts.subject)
   // Creator is the application; Producer is whatever writes the bytes, and
   // pdf-lib stamps its own name there on save regardless of what we ask for.
-  doc.setCreator('Algach')
+  doc.setCreator('Timetable Generator')
   doc.setCreationDate(new Date())
   doc.setModificationDate(new Date())
 

@@ -141,7 +141,7 @@ const run = async () => {
 
   // --- batch -------------------------------------------------------------
   check('batch PDF has one page per stop', batch.getPageCount() === 6, `${batch.getPageCount()} pages`)
-  check('batch PDF names the application that made it', batch.getCreator() === 'Algach', batch.getCreator() ?? 'unset')
+  check('batch PDF names the application that made it', batch.getCreator() === 'Timetable Generator', batch.getCreator() ?? 'unset')
   check('title metadata survives', text.getTitle() === 'Kinoteatr Avrora', text.getTitle() ?? 'unset')
 
   console.log(failures === 0 ? '\nAll PDF checks passed.' : `\n${failures} check(s) failed.`)

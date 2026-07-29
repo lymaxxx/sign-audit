@@ -323,6 +323,41 @@ select {
   font-size: 12px;
 }
 
+.sidebar-note {
+  margin: 0 12px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.route-card-order {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.route-card-order button {
+  border: 1px solid var(--line);
+  background: transparent;
+  border-radius: var(--radius);
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.route-card-order button:hover:not(:disabled) {
+  color: var(--ink);
+  background: #fff;
+}
+
+.route-card-order button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .route-card-body {
   display: flex;
   flex-direction: column;

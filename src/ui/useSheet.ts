@@ -31,13 +31,13 @@ export const useFontBook = (): FontBook | null => {
 /** Point the browser at the same files the engine measured. */
 export const useFontFaces = (): void => {
   useEffect(() => {
-    const id = 'algach-font-faces'
+    const id = 'timetable-font-faces'
     if (document.getElementById(id)) return
 
     // The single-file build has already declared its faces against embedded
     // data; adding these would only send the browser after files that are not
     // there, since it has no server to ask.
-    if (window.__ALGACH_FONTS__) return
+    if (window.__TIMETABLE_FONTS__) return
 
     const style = document.createElement('style')
     style.id = id

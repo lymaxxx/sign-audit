@@ -1,4 +1,4 @@
-# Algach
+# Timetable Generator
 
 A macOS app that turns planned timetables into print-ready schedule sheets — one for every stop.
 
@@ -70,7 +70,7 @@ design — and every per-stop edit layered over it — untouched.
 
 ## Running it
 
-**Nothing installed.** Download `Algach.html` and double-click it. One file, no server, no toolchain —
+**Nothing installed.** Download `TimetableGenerator.html` and double-click it. One file, no server, no toolchain —
 the fonts and the whole application are inlined, so it runs straight off a disk. It is the complete app;
 what it does not have is a native menu and system file dialogs, so files arrive through the browser's
 downloads instead.
@@ -83,7 +83,7 @@ tab. GitHub's own Mac machines build it and attach a `.dmg` to the run — take 
 ```bash
 npm install
 npm run dev           # the app in a browser
-npm run build:single  # regenerate Algach.html
+npm run build:single  # regenerate TimetableGenerator.html
 npm run tauri dev     # the real window, on a Mac
 npm run tauri build   # .app and .dmg
 ```
@@ -97,7 +97,7 @@ It is not. The builds are unsigned, so macOS quarantines anything downloaded and
 Open the `.dmg`, drag the app across, then clear the flag:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/Algach.app
+xattr -dr com.apple.quarantine "/Applications/Timetable Generator.app"
 ```
 
 Recent versions of macOS no longer offer a way past this through right-click → Open, so the command is
@@ -115,7 +115,7 @@ npm run proof        # render the demo network across a spread of panel sizes
 npm run proof:png    # …and rasterise them to look at
 npx tsx scripts/proof-pdf.ts && npx tsx scripts/check-pdf.ts
 npm run check:app     # drives the running app, needs `npm run dev`
-npm run check:single  # opens Algach.html off the disk, as a person would
+npm run check:single  # opens TimetableGenerator.html off the disk, as a person would
 npm run check:import  # imports the example CSVs through the file picker
 ```
 

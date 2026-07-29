@@ -12,7 +12,7 @@ import { chromium } from 'playwright'
  */
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const FILE = resolve(ROOT, 'Algach.html')
+const FILE = resolve(ROOT, 'TimetableGenerator.html')
 
 let failures = 0
 const check = (label, ok, detail = '') => {

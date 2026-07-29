@@ -1,13 +1,13 @@
 [package]
-name = "algach"
+name = "timetable-generator"
 version = "0.1.0"
 description = "Transit schedule layout generator"
-authors = ["Algach"]
+authors = ["Timetable Generator"]
 edition = "2021"
 rust-version = "1.77.2"
 
 [lib]
-name = "algach_lib"
+name = "timetable_generator_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

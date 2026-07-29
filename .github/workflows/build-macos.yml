@@ -66,14 +66,22 @@ jobs:
           bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
           mkdir -p out
 
-          ditto -c -k --sequesterRsrc --keepParent "$bundle/macos/Algach.app" "out/Algach-${{ matrix.target }}.zip"
+          # The product name carries a space, and Tauri derives both the
+          # bundle and the binary inside it from that name — so the .app is
+          # found rather than spelled out, and the executable is checked
+          # without assuming what it is called.
+          app="$(find "$bundle/macos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$app" || { echo "no .app in $bundle/macos"; exit 1; }
+
+          ditto -c -k --sequesterRsrc --keepParent "$app" "out/TimetableGenerator-${{ matrix.target }}.zip"
           cp "$bundle"/dmg/*.dmg out/
 
           # Prove the archive still holds a runnable binary before shipping it.
           rm -rf verify && mkdir verify
-          ditto -x -k "out/Algach-${{ matrix.target }}.zip" verify
-          test -x "verify/Algach.app/Contents/MacOS/Algach"
-          echo "executable bit survived the round trip"
+          ditto -x -k "out/TimetableGenerator-${{ matrix.target }}.zip" verify
+          binary="$(find verify -path '*/Contents/MacOS/*' -type f -perm -111 -print -quit)"
+          test -n "$binary" || { echo "no executable survived the round trip"; exit 1; }
+          echo "executable bit survived the round trip: $binary"
 
           ls -la out
 
@@ -83,7 +91,7 @@ jobs:
           The build is unsigned, so macOS quarantines it on download and
           reports it as damaged. Clear the flag after unpacking:
 
-              xattr -dr com.apple.quarantine /Applications/Algach.app
+              xattr -dr com.apple.quarantine "/Applications/Timetable Generator.app"
 
           Right-click and Open no longer offers a way past this on recent
           macOS. Removing the warning for good needs a paid Apple Developer
@@ -92,7 +100,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Algach-${{ matrix.target }}
+          name: TimetableGenerator-${{ matrix.target }}
           path: out/
           if-no-files-found: error
           retention-days: 30
@@ -112,6 +120,6 @@ jobs:
       - run: npm run build:single
       - uses: actions/upload-artifact@v4
         with:
-          name: Algach-single-file
-          path: Algach.html
+          name: TimetableGenerator-single-file
+          path: TimetableGenerator.html
           if-no-files-found: error

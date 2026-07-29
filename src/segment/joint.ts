@@ -96,15 +96,16 @@ interface Slot {
   window?: Window
 }
 
-/** Split `count` departures off one end of a headway, leaving the rest behind. */
+/** Split `count` departures off one end of a section, leaving the rest behind. */
 const splitOff = (
   section: Section,
   edge: 'first' | 'last',
   count: number,
   keep: number,
 ): { anchor: Section; remainder: Section } | null => {
-  if (section.kind !== 'interval') return null
-  // Never take so many that the headway stops being one.
+  // Never take so many that what is left stops being worth printing: a headway
+  // needs enough trips to still read as one, a list or a grid needs at least a
+  // departure to its name.
   const take = Math.min(count, section.times.length - keep)
   if (take < 1) return null
 
@@ -140,6 +141,12 @@ const splitOff = (
  * this to the headway rather than to the first and last slots matters: a day
  * whose closing departure falls past the snapped end of its window already has
  * a slot there, while a day ending exactly on the boundary does not.
+ *
+ * Once a row exists, *every* column fills it. A Sunday that reads as an hourly
+ * grid where the weekday reads as a headway still has a first departure, and
+ * leaving that cell blank under a heading that says "First departures" tells a
+ * reader the service has none. Only a block with no headway anywhere — printed
+ * as one continuous list — is left alone, because there is no row to fill.
  */
 const anchorIntervals = (columns: AlignedSections[], rules: SegmentRules): AlignedSections[] => {
   if (columns.length === 0 || columns[0]!.length === 0) return columns
@@ -155,12 +162,16 @@ const anchorIntervals = (columns: AlignedSections[], rules: SegmentRules): Align
   const anchor = (edge: 'first' | 'last', intervalIndex: number, slotIndex: number) => {
     work.forEach((sections, col) => {
       const section = sections[intervalIndex]
-      if (section?.kind !== 'interval') return
+      if (!section) return
       // Already anchored on this side by departures the day itself lists.
       if (sections[slotIndex]) return
 
       const wanted = Math.max(1, edge === 'first' ? rules.firstTripsCount : rules.lastTripsCount)
-      const split = splitOff(section, edge, wanted, rules.minTripsForInterval)
+      // A headway has to survive being peeled; a list or a grid only has to
+      // keep a departure. The opening peel runs first, so a two-departure cell
+      // gives up its first and then declines the second on its own.
+      const keep = section.kind === 'interval' ? rules.minTripsForInterval : 1
+      const split = splitOff(section, edge, wanted, keep)
       if (!split) return
 
       sections[intervalIndex] = split.remainder

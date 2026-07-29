@@ -162,7 +162,7 @@ const run = async () => {
   await writeFile(join(OUT, 'fonts.css'), css, 'utf8')
 
   const html =
-    `<!doctype html><meta charset="utf-8"><title>Algach layout proof</title>` +
+    `<!doctype html><meta charset="utf-8"><title>Timetable Generator layout proof</title>` +
     `<link rel="stylesheet" href="fonts.css">` +
     `<style>body{margin:0;padding:24px;background:#18181b;color:#e4e4e7;` +
     `font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}` +

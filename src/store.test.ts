@@ -67,6 +67,30 @@ describe('the template library actions', () => {
     expect(state.project.edits.s1?.templateId).toBeUndefined()
   })
 
+  it('reorders routes without disturbing the shared timetable object', () => {
+    const before = useStore.getState().project.timetable
+    const ids = before.routes.map((r) => r.id)
+    expect(ids.length).toBeGreaterThan(1)
+
+    useStore.getState().moveRoute(ids[1]!, -1)
+    const after = useStore.getState().project.timetable
+    expect(after.routes.map((r) => r.id)).toEqual([ids[1], ids[0], ...ids.slice(2)])
+
+    // History entries share the timetable, so a reorder has to replace it
+    // rather than splice the array every snapshot is holding.
+    expect(after).not.toBe(before)
+    expect(before.routes.map((r) => r.id)).toEqual(ids)
+  })
+
+  it('declines to move a route off either end', () => {
+    const ids = useStore.getState().project.timetable.routes.map((r) => r.id)
+    useStore.getState().moveRoute(ids[0]!, -1)
+    expect(useStore.getState().project.timetable.routes.map((r) => r.id)).toEqual(ids)
+
+    useStore.getState().moveRoute(ids[ids.length - 1]!, 1)
+    expect(useStore.getState().project.timetable.routes.map((r) => r.id)).toEqual(ids)
+  })
+
   it('refuses to delete the last remaining template', () => {
     const state = useStore.getState()
     // Whittle down to one template, then confirm the last one survives.

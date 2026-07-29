@@ -9,7 +9,7 @@ import { loadBundledFonts, type FontBook, type FontLoader } from './fonts'
  */
 declare global {
   interface Window {
-    __ALGACH_FONTS__?: Record<string, string>
+    __TIMETABLE_FONTS__?: Record<string, string>
   }
 }
 
@@ -22,7 +22,7 @@ const decodeBase64 = (base64: string): Uint8Array => {
 
 /** Fonts ship in the app bundle and are fetched from its own origin. */
 export const browserFontLoader: FontLoader = async (file) => {
-  const embedded = typeof window !== 'undefined' ? window.__ALGACH_FONTS__?.[file] : undefined
+  const embedded = typeof window !== 'undefined' ? window.__TIMETABLE_FONTS__?.[file] : undefined
   if (embedded) return decodeBase64(embedded)
 
   const res = await fetch(`/fonts/${file}`)

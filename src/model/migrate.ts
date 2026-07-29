@@ -4,7 +4,7 @@ import type { MasterTemplate } from './template'
 /**
  * Bringing a saved file up to the template the app now expects.
  *
- * A `.algachtpl` written last month knows nothing about fields added since,
+ * A `.tgentpl` written last month knows nothing about fields added since,
  * and a shallow merge with the defaults does not help: it replaces whole
  * branches wholesale, so a saved `zones` block silently drops every setting
  * added under it. The layout then reads through an undefined object and the

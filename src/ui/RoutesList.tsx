@@ -15,6 +15,7 @@ export const RoutesList = () => {
   const stops = useStore((s) => s.project.timetable.stops)
   const timetable = useStore((s) => s.project.timetable)
   const updateRoute = useStore((s) => s.updateRoute)
+  const moveRoute = useStore((s) => s.moveRoute)
   const [query, setQuery] = useState('')
 
   const filtered = useMemo(() => {
@@ -44,6 +45,8 @@ export const RoutesList = () => {
         <span className="count">{routes.length}</span>
       </header>
 
+      <p className="sidebar-note">Sheets list routes in this order. Night routes always come last.</p>
+
       <input
         className="search"
         type="search"
@@ -55,6 +58,11 @@ export const RoutesList = () => {
       <ul className="route-list">
         {filtered.map((route) => {
           const served = stops.filter((stop) => routesAtStop(timetable, stop.id).some((r) => r.id === route.id))
+          // Reordering acts on the roster, not on the filtered view, or moving
+          // a route "up" during a search would jump it past lines it cannot
+          // see. Hidden while searching for the same reason.
+          const at = routes.findIndex((r) => r.id === route.id)
+          const reorderable = query.trim() === ''
           return (
             <li key={route.id}>
               <details className="route-card">
@@ -64,6 +72,32 @@ export const RoutesList = () => {
                   </span>
                   <span className="route-card-dest">{route.terminal || 'No destination'}</span>
                   {route.isNightRoute ? <em className="flag" title="Night route" /> : null}
+                  {reorderable ? (
+                    <span className="route-card-order">
+                      <button
+                        type="button"
+                        title="Move up"
+                        disabled={at <= 0}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          moveRoute(route.id, -1)
+                        }}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        title="Move down"
+                        disabled={at >= routes.length - 1}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          moveRoute(route.id, 1)
+                        }}
+                      >
+                        ↓
+                      </button>
+                    </span>
+                  ) : null}
                 </summary>
 
                 <div className="route-card-body">

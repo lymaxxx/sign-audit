@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { segmentDay, segmentDayTypes } from './index'
 import { defaultRules } from '../model/defaults'
-import { parseTimeList } from '../model/time'
+import { cleanTimes, parseTimeList } from '../model/time'
 import type { SegmentRules } from '../model/template'
 
 const rules = (over: Partial<SegmentRules> = {}): SegmentRules => ({ ...defaultRules(), ...over })
@@ -262,5 +262,67 @@ describe('segmenting several kinds of day together', () => {
     const seen1 = c1!.flatMap((s) => s?.times ?? []).sort((a, b) => a - b)
     expect(seen0).toEqual([...day0].sort((a, b) => a - b))
     expect(seen1).toEqual([...day1].sort((a, b) => a - b))
+  })
+
+  describe('anchoring the edges of the day', () => {
+    // Two columns running a clean headway beside one too scattered to read as
+    // one, so it stays an hourly grid. That grid's cell is the one the
+    // anchoring step used to skip, leaving the column blank under a heading
+    // that said "First departures".
+    const everyN = (from: number, step: number, count: number): number[] =>
+      Array.from({ length: count }, (_, i) => from + i * step)
+
+    const headwayWeekday = everyN(at(6, 34), 15, 56)
+    const headwaySaturday = everyN(at(7, 5), 20, 42)
+    const scatteredSunday = Array.from({ length: 14 }, (_, i) => {
+      const hour = 8 + i
+      return [at(hour, (hour * 7) % 40), at(hour, 20 + ((hour * 13) % 30))]
+    }).flat()
+
+    const columns = () => segmentDayTypes([headwayWeekday, headwaySaturday, scatteredSunday], rules())
+
+    it('leaves the scattered column as a grid rather than forcing a headway on it', () => {
+      const [, , sunday] = columns()
+      expect(sunday!.some((s) => s?.kind === 'hourly')).toBe(true)
+    })
+
+    it('gives every column a first departure, grid or headway alike', () => {
+      const cols = columns()
+      const firstRow = cols[0]!.findIndex((s) => s?.peeled === 'first')
+      expect(firstRow).toBeGreaterThanOrEqual(0)
+      for (const col of cols) {
+        expect(col[firstRow]).not.toBeNull()
+        expect(col[firstRow]!.times.length).toBeGreaterThan(0)
+      }
+    })
+
+    it('peels the actual opening departure, not some later one', () => {
+      const cols = columns()
+      const firstRow = cols[0]!.findIndex((s) => s?.peeled === 'first')
+      const sources = [headwayWeekday, headwaySaturday, scatteredSunday]
+      cols.forEach((col, i) => {
+        expect(col[firstRow]!.times[0]).toBe(Math.min(...sources[i]!))
+      })
+    })
+
+    it('loses nothing to the peeling', () => {
+      const cols = columns()
+      const sources = [headwayWeekday, headwaySaturday, scatteredSunday]
+      cols.forEach((col, i) => {
+        const seen = col.flatMap((s) => s?.times ?? []).sort((a, b) => a - b)
+        expect(seen).toEqual(cleanTimes(sources[i]!))
+      })
+    })
+
+    it('leaves a block with no headway anywhere as one continuous list', () => {
+      // Nothing regular in any column, so there is no first/last row to fill
+      // and none should be invented.
+      const scatter = (seed: number) =>
+        Array.from({ length: 12 }, (_, i) => at(8 + i, (seed * (i + 3) * 11) % 55))
+      const cols = segmentDayTypes([scatter(1), scatter(2)], rules())
+      for (const col of cols) {
+        expect(col.some((s) => s?.peeled)).toBe(false)
+      }
+    })
   })
 })

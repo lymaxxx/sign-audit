@@ -17,7 +17,7 @@ const n = (v: number): string => {
 }
 
 /** Font family name the browser will match against the injected @font-face. */
-export const cssFamily = (family: string): string => `algach-${family}`
+export const cssFamily = (family: string): string => `tg-${family}`
 
 const drawPrimitive = (p: Primitive): string => {
   switch (p.type) {

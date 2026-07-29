@@ -69,18 +69,28 @@ const deserialiseProject = (text: string): Project => {
   }
 }
 
+/**
+ * File types.
+ *
+ * New saves carry the current extensions; the open dialogs also accept the
+ * ones the application used when it was called Algach, so nothing anybody has
+ * already saved is stranded by the rename.
+ */
+const PROJECT_FILE = { name: 'Timetable Generator project', extensions: ['tgen', 'algach'] }
+const TEMPLATE_FILE = { name: 'Timetable Generator template', extensions: ['tgentpl', 'algachtpl'] }
+
 export const saveProject = async (): Promise<void> => {
   const { project } = useStore.getState()
   await saveFile(
-    `${project.name || 'project'}.algach`,
+    `${project.name || 'project'}.tgen`,
     encoder.encode(serialiseProject(project)),
-    [{ name: 'Algach project', extensions: ['algach'] }],
+    [PROJECT_FILE],
     'application/json',
   )
 }
 
 export const openProject = async (): Promise<void> => {
-  const [file] = await openFiles([{ name: 'Algach project', extensions: ['algach'] }])
+  const [file] = await openFiles([PROJECT_FILE])
   if (!file) return
   useStore.getState().loadProject(deserialiseProject(new TextDecoder().decode(file.bytes)))
 }
@@ -90,15 +100,15 @@ export const saveTemplate = async (): Promise<void> => {
   const { project, activeTemplateId } = useStore.getState()
   const active = project.templates.find((t) => t.id === activeTemplateId) ?? project.templates[0]!
   await saveFile(
-    `${active.template.name || active.name || 'template'}.algachtpl`,
+    `${active.template.name || active.name || 'template'}.tgentpl`,
     encoder.encode(JSON.stringify(active.template, null, 2)),
-    [{ name: 'Algach template', extensions: ['algachtpl'] }],
+    [TEMPLATE_FILE],
     'application/json',
   )
 }
 
 export const openTemplate = async (): Promise<void> => {
-  const [file] = await openFiles([{ name: 'Algach template', extensions: ['algachtpl'] }])
+  const [file] = await openFiles([TEMPLATE_FILE])
   if (!file) return
   const loaded = JSON.parse(new TextDecoder().decode(file.bytes))
   useStore.getState().applyTemplate(migrateTemplate(loaded))

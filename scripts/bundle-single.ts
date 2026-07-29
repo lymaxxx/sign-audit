@@ -46,12 +46,12 @@ const run = async () => {
     '<!doctype html>',
     '<html lang="en"><head><meta charset="UTF-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
-    '<title>Algach — transit schedules</title>',
+    '<title>Timetable Generator</title>',
     '<style>',
     faces.join(''),
     css,
     '</style>',
-    '<script>window.__ALGACH_FONTS__=',
+    '<script>window.__TIMETABLE_FONTS__=',
     JSON.stringify(fonts),
     '</script>',
     '</head><body><div id="root"></div><script>',
@@ -59,12 +59,12 @@ const run = async () => {
     '</script></body></html>',
   ].join('')
 
-  const out = join(ROOT, 'Algach.html')
+  const out = join(ROOT, 'TimetableGenerator.html')
   await writeFile(out, html, 'utf8')
 
   const families = new Set(BUNDLED_FONTS.map((f) => f.family))
   console.log(
-    `Algach.html  ${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MB  ` +
+    `TimetableGenerator.html  ${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MB  ` +
       `(${BUNDLED_FONTS.length} cuts across ${families.size} families)`,
   )
 }

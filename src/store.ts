@@ -106,7 +106,7 @@ export interface AppState {
   replaceTimetable: (timetable: Timetable, issues: ImportIssue[]) => void
   mergeTimetable: (timetable: Timetable, issues: ImportIssue[]) => void
   /** Replace the active template's own settings, in place — used when a
-   *  `.algachtpl` file is loaded onto whichever template is being edited. */
+   *  `.tgentpl` file is loaded onto whichever template is being edited. */
   applyTemplate: (template: MasterTemplate) => void
   loadProject: (project: Project) => void
   newProject: () => void
@@ -128,6 +128,9 @@ export interface AppState {
   addZoneItem: (zone: ZoneId, item: VectorItem) => void
   /** Edit a line's own presentation — its colour, headsign, streets. */
   updateRoute: (routeId: string, mutate: (route: Route) => void) => void
+  /** Move a line up or down the roster. Sheets list routes in this order, so
+   *  this is how a network decides which line leads a shelter. */
+  moveRoute: (routeId: string, delta: number) => void
   removeZoneItem: (zone: ZoneId, itemId: string) => void
 }
 
@@ -403,6 +406,21 @@ export const useStore = create<AppState>((set, get) => ({
           return copy
         }),
       }
+    }),
+
+  moveRoute: (routeId, delta) =>
+    get().commit('Reorder routes', (draft) => {
+      const from = draft.timetable.routes.findIndex((r) => r.id === routeId)
+      if (from < 0) return
+      const to = from + delta
+      if (to < 0 || to >= draft.timetable.routes.length) return
+
+      // Same care updateRoute takes: history entries share the timetable, so
+      // the array is replaced rather than spliced in place.
+      const routes = [...draft.timetable.routes]
+      const [moved] = routes.splice(from, 1)
+      routes.splice(to, 0, moved!)
+      draft.timetable = { ...draft.timetable, routes }
     }),
 
   addZoneItem: (zone, item) =>

@@ -125,7 +125,7 @@ export const App = () => {
   return (
     <div className="app">
       <header className="toolbar">
-        <strong className="brand">Algach</strong>
+        <strong className="brand">Timetable Generator</strong>
 
         <Button onClick={() => void importFile(true)}>Import…</Button>
         <Button variant="ghost" onClick={() => void importFile(false)} title="Add to what is already loaded">

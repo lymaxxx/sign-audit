@@ -12,7 +12,7 @@ import { chromium } from 'playwright'
  */
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const URL = process.env.APP_URL ?? `file://${resolve(ROOT, 'Algach.html')}`
+const URL = process.env.APP_URL ?? `file://${resolve(ROOT, 'TimetableGenerator.html')}`
 
 /**
  * Measured as a difference, not an absolute. Waiting two frames after each
