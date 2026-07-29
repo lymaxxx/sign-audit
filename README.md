@@ -59,6 +59,10 @@ there is unsaved-out work.
 
 ## Hosting
 
+New to GitHub? **[SETUP.md](SETUP.md) walks through getting this online and onto
+your phone, click by click, entirely in a browser.** The rest of this section is
+the short version.
+
 `.github/workflows/deploy.yml` lints, tests and builds on every push, and
 publishes to GitHub Pages from the repository's **default branch** — whatever
 it happens to be called — or on demand from the Actions tab.
