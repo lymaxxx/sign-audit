@@ -14,9 +14,14 @@ import { SHEET_FRACTION, WIDE_QUERY, useMediaQuery } from './util/useMediaQuery.
 
 const emptyFilters = { query: '', types: new Set(), statuses: new Set(), sort: 'name' }
 
-// Zoom level used when jumping to a sign from the list, in pixels per drawing
-// unit. Enough to read the surrounding plan without losing context.
-const LOCATE_SCALE = 12
+// How far to zoom in when jumping to a sign, relative to the scale that fits
+// the *whole* plan in view. A fixed pixels-per-unit constant does not work
+// across drawings — the same number reads as "reasonable" on one plan and as
+// a many-thousand-times zoom-in on another, depending on the drawing's native
+// units (mm, inches, feet…). Scaling off the plan's own fit level sidesteps
+// that entirely: this always shows roughly the same fraction of the drawing
+// around the sign, whatever units it was drawn in.
+const LOCATE_ZOOM_FACTOR = 15
 
 function sortSigns(signs, sort) {
   const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })
@@ -96,12 +101,21 @@ export default function App() {
   // centred in what is left above it.
   const sheetInset = panelOpen && !wide ? SHEET_FRACTION : 0
 
+  // Never zoom out to locate a sign, only in — but the target itself is
+  // derived from the plan's own fit scale (see LOCATE_ZOOM_FACTOR), not a
+  // fixed number, so it lands at a sensible zoom on any drawing's units.
+  const locateScale = useCallback(() => {
+    const fit = viewport.scaleToFit(project?.bounds)
+    const target = fit ? fit * LOCATE_ZOOM_FACTOR : viewport.view.scale
+    return Math.max(viewport.view.scale, target)
+  }, [viewport, project?.bounds])
+
   const locate = useCallback(
     (sign) => {
       if (!sign) return
-      viewport.centerOn(sign.x, sign.y, Math.max(viewport.view.scale, LOCATE_SCALE), sheetInset)
+      viewport.centerOn(sign.x, sign.y, locateScale(), sheetInset)
     },
-    [viewport, sheetInset],
+    [viewport, sheetInset, locateScale],
   )
 
   const openSign = useCallback(
@@ -112,14 +126,9 @@ export default function App() {
       if (!sign) return
       // The sheet is about to open, so reserve room for it even though
       // `sheetInset` still reflects the previous state this render.
-      viewport.centerOn(
-        sign.x,
-        sign.y,
-        Math.max(viewport.view.scale, LOCATE_SCALE),
-        wide ? 0 : SHEET_FRACTION,
-      )
+      viewport.centerOn(sign.x, sign.y, locateScale(), wide ? 0 : SHEET_FRACTION)
     },
-    [signs, viewport, wide],
+    [signs, viewport, wide, locateScale],
   )
 
   // Tapping a marker on the plan opens the sheet over it; nudge the view so the
@@ -304,6 +313,7 @@ export default function App() {
             onAddAt={addSignAt}
             viewport={viewport}
             hiddenBlocks={project.hiddenBlocks}
+            backdropLayers={project.backdropLayers}
           />
 
           <div className="plan__tools">
@@ -372,6 +382,8 @@ export default function App() {
               showLabels={project.showLabels}
               onSetLayer={actions.setLayerVisible}
               onSetShowLabels={actions.setShowLabels}
+              backdropLayers={project.backdropLayers}
+              onSetBackdrop={actions.setBackdropLayer}
               onClose={() => setSheet(null)}
             />
           </div>

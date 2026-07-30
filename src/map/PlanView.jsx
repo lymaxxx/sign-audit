@@ -14,13 +14,24 @@ import { visibleBounds } from './useViewport.js'
 // Below this on-screen height, plan text is an unreadable smudge and is skipped.
 const MIN_LABEL_PX = 6
 
-const LayerPaths = memo(function LayerPaths({ paths, hiddenKey, hiddenBlocksKey }) {
+const LayerPaths = memo(function LayerPaths({ paths, hiddenKey, hiddenBlocksKey, backdropKey }) {
   const hidden = new Set(hiddenKey ? hiddenKey.split('\n') : [])
   const hiddenBlocks = new Set(hiddenBlocksKey ? hiddenBlocksKey.split('\n') : [])
+  const backdrop = new Set(backdropKey ? backdropKey.split('\n') : [])
+  const visible = paths.filter(
+    (path) => !hidden.has(path.layer) && !(path.sourceBlock && hiddenBlocks.has(path.sourceBlock)),
+  )
+  // Backdrop layers (e.g. an XREF'd wall shell) are passive context, so they
+  // sit behind everything else regardless of where they fall in the bake —
+  // ordinary layer order only guarantees fills stay under line work.
+  const ordered = [...visible].sort(
+    (a, b) => Number(backdrop.has(a.layer)) - Number(backdrop.has(b.layer)),
+  )
   return (
     <g strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
-      {paths.map((path, index) =>
-        hidden.has(path.layer) || (path.sourceBlock && hiddenBlocks.has(path.sourceBlock)) ? null : path.filled ? (
+      {ordered.map((path, index) => {
+        const muted = backdrop.has(path.layer)
+        return path.filled ? (
           // Solid hatches. even-odd keeps holes in ring-shaped fills, and the
           // slight transparency stops a large filled area burying line work.
           <path
@@ -28,33 +39,41 @@ const LayerPaths = memo(function LayerPaths({ paths, hiddenKey, hiddenBlocksKey 
             d={path.d}
             fill={path.color}
             fillRule="evenodd"
-            fillOpacity={0.55}
+            fillOpacity={muted ? 0.2 : 0.55}
             stroke="none"
+            style={muted ? { pointerEvents: 'none' } : undefined}
           />
         ) : (
           <path
             key={`${path.layer}-${path.color}-${index}`}
             d={path.d}
             fill="none"
-            stroke={path.color}
+            stroke={muted ? 'var(--ink-dim)' : path.color}
+            strokeOpacity={muted ? 0.5 : 1}
             vectorEffect="non-scaling-stroke"
+            style={muted ? { pointerEvents: 'none' } : undefined}
           />
-        ),
-      )}
+        )
+      })}
     </g>
   )
 })
 
-const Labels = memo(function Labels({ labels, view, size, hiddenKey, hiddenBlocksKey }) {
+const Labels = memo(function Labels({ labels, view, size, hiddenKey, hiddenBlocksKey, backdropKey }) {
   const hidden = new Set(hiddenKey ? hiddenKey.split('\n') : [])
   const hiddenBlocks = new Set(hiddenBlocksKey ? hiddenBlocksKey.split('\n') : [])
+  const backdrop = new Set(backdropKey ? backdropKey.split('\n') : [])
   const box = visibleBounds(view, size, 200)
   const minSize = MIN_LABEL_PX / (view.scale || 1)
 
+  // Backdrop text (room numbers, xref annotation) is not what the plan is for
+  // here — it is passive context, not something to read — so it is dropped
+  // rather than dimmed, to keep the plan's own labels uncluttered.
   const shown = labels.filter(
     (l) =>
       l.size >= minSize &&
       !hidden.has(l.layer) &&
+      !backdrop.has(l.layer) &&
       !(l.sourceBlock && hiddenBlocks.has(l.sourceBlock)) &&
       (!box || (l.x >= box.minX && l.x <= box.maxX && l.y >= box.minY && l.y <= box.maxY)),
   )
@@ -88,6 +107,7 @@ export default function PlanView({
   onAddAt,
   viewport,
   hiddenBlocks,
+  backdropLayers,
 }) {
   const { containerRef, size, view, transform, handlers, toWorld, fitTo, wasDrag } = viewport
   const fittedFor = useRef(null)
@@ -105,6 +125,7 @@ export default function PlanView({
     .map((l) => l.name)
     .join('\n')
   const hiddenBlocksKey = [...(hiddenBlocks ?? [])].join('\n')
+  const backdropKey = [...(backdropLayers ?? [])].join('\n')
 
   return (
     <div
@@ -120,7 +141,12 @@ export default function PlanView({
       <svg className="plan__svg" width="100%" height="100%" role="presentation">
         <g transform={transform}>
           {plan?.paths?.length ? (
-            <LayerPaths paths={plan.paths} hiddenKey={hiddenKey} hiddenBlocksKey={hiddenBlocksKey} />
+            <LayerPaths
+              paths={plan.paths}
+              hiddenKey={hiddenKey}
+              hiddenBlocksKey={hiddenBlocksKey}
+              backdropKey={backdropKey}
+            />
           ) : null}
           {project?.showLabels && plan?.labels?.length ? (
             <Labels
@@ -129,6 +155,7 @@ export default function PlanView({
               size={size}
               hiddenKey={hiddenKey}
               hiddenBlocksKey={hiddenBlocksKey}
+              backdropKey={backdropKey}
             />
           ) : null}
           <SignMarkers

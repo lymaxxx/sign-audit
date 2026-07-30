@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react'
 import { evenlySpace } from '../dxf/detectSigns.js'
 
 /**
@@ -16,9 +17,12 @@ import { evenlySpace } from '../dxf/detectSigns.js'
 const MAX_SIDES = 4
 const LABELS = ['A', 'B', 'C', 'D']
 const DIAL = 46
+const NUDGE = 15
 
 export default function SidesEditor({ sides, onChange }) {
   const list = sides?.length ? sides : [{ id: 'A', bearing: 0 }]
+  const svgRef = useRef(null)
+  const [dragIndex, setDragIndex] = useState(null)
 
   const setCount = (count) => {
     if (count === list.length) return
@@ -38,6 +42,46 @@ export default function SidesEditor({ sides, onChange }) {
   const setSide = (index, patch) =>
     onChange(list.map((side, i) => (i === index ? { ...side, ...patch } : side)))
 
+  const nudge = (index, delta) =>
+    setSide(index, { bearing: (((list[index].bearing ?? 0) + delta) % 360 + 360) % 360 })
+
+  // Convert a pointer event to a bearing by mapping it into the dial's own SVG
+  // user space (via its screen CTM) rather than trusting the container's CSS
+  // box — the dial can be scaled by layout, and this stays correct regardless.
+  const bearingAt = (event) => {
+    const svg = svgRef.current
+    const ctm = svg?.getScreenCTM()
+    if (!ctm) return null
+    const point = svg.createSVGPoint()
+    point.x = event.clientX
+    point.y = event.clientY
+    const local = point.matrixTransform(ctm.inverse())
+    // Screen space has Y down; the dial's own bearing convention (see render
+    // below) negates that back out, so undo it the same way here.
+    const screenAngle = Math.atan2(local.y, local.x)
+    return (((-screenAngle * 180) / Math.PI) % 360 + 360) % 360
+  }
+
+  const startDrag = (index) => (event) => {
+    event.preventDefault()
+    svgRef.current?.setPointerCapture?.(event.pointerId)
+    setDragIndex(index)
+    const bearing = bearingAt(event)
+    if (bearing != null) setSide(index, { bearing })
+  }
+
+  const dragMove = (event) => {
+    if (dragIndex === null) return
+    const bearing = bearingAt(event)
+    if (bearing != null) setSide(dragIndex, { bearing })
+  }
+
+  const endDrag = (event) => {
+    if (dragIndex === null) return
+    svgRef.current?.releasePointerCapture?.(event.pointerId)
+    setDragIndex(null)
+  }
+
   return (
     <div className="field">
       <span>Sides</span>
@@ -56,21 +100,36 @@ export default function SidesEditor({ sides, onChange }) {
       </div>
 
       <div className="sides">
-        <svg className="sides__dial" viewBox="-60 -60 120 120" role="presentation">
+        <svg
+          ref={svgRef}
+          className="sides__dial"
+          viewBox="-60 -60 120 120"
+          role="presentation"
+          onPointerMove={dragMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        >
           <circle r={DIAL} fill="none" stroke="var(--line)" strokeWidth={1} />
           {list.map((side, index) => {
             // Negated: the dial is drawn in screen space, where Y runs down.
             const angle = (-side.bearing * Math.PI) / 180
+            const hx = Math.cos(angle) * DIAL
+            const hy = Math.sin(angle) * DIAL
             return (
               <g key={side.id ?? index}>
+                <line x1={0} y1={0} x2={hx} y2={hy} stroke="var(--accent)" strokeWidth={2} strokeLinecap="round" />
+                {/* Fat, invisible hit area — the visible line is too thin to
+                    grab reliably with a fingertip. */}
                 <line
                   x1={0}
                   y1={0}
-                  x2={Math.cos(angle) * DIAL}
-                  y2={Math.sin(angle) * DIAL}
-                  stroke="var(--accent)"
-                  strokeWidth={2}
+                  x2={hx}
+                  y2={hy}
+                  stroke="transparent"
+                  strokeWidth={16}
                   strokeLinecap="round"
+                  style={{ cursor: 'grab', touchAction: 'none' }}
+                  onPointerDown={startDrag(index)}
                 />
                 <text
                   x={Math.cos(angle) * (DIAL - 14)}
@@ -79,9 +138,20 @@ export default function SidesEditor({ sides, onChange }) {
                   dominantBaseline="central"
                   fontSize={13}
                   fill="var(--ink)"
+                  style={{ pointerEvents: 'none' }}
                 >
                   {side.id}
                 </text>
+                <circle
+                  cx={hx}
+                  cy={hy}
+                  r={9}
+                  fill="var(--accent)"
+                  stroke="var(--surface)"
+                  strokeWidth={2}
+                  style={{ cursor: 'grab', touchAction: 'none' }}
+                  onPointerDown={startDrag(index)}
+                />
               </g>
             )
           })}
@@ -97,6 +167,14 @@ export default function SidesEditor({ sides, onChange }) {
                 maxLength={4}
                 onChange={(event) => setSide(index, { id: event.target.value.toUpperCase() })}
               />
+              <button
+                type="button"
+                className="ghost sides__step"
+                aria-label={`Rotate side ${side.id} 15 degrees clockwise`}
+                onClick={() => nudge(index, -NUDGE)}
+              >
+                −
+              </button>
               <input
                 className="sides__bearing"
                 type="number"
@@ -111,6 +189,14 @@ export default function SidesEditor({ sides, onChange }) {
                 }
               />
               <span className="sides__unit">°</span>
+              <button
+                type="button"
+                className="ghost sides__step"
+                aria-label={`Rotate side ${side.id} 15 degrees counter-clockwise`}
+                onClick={() => nudge(index, NUDGE)}
+              >
+                +
+              </button>
             </li>
           ))}
         </ul>

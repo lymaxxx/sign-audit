@@ -501,6 +501,19 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
+.chip__order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2em;
+  height: 1.2em;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
 .chip--type {
   background: transparent;
   border-color: var(--line);
@@ -896,6 +909,13 @@ textarea {
   align-self: flex-start;
 }
 
+.sheet__subhead {
+  margin: 0.4rem 0 0;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.95rem;
+}
+
 .toggle {
   display: flex;
   align-items: center;
@@ -1176,6 +1196,7 @@ textarea {
   width: 7rem;
   height: 7rem;
   flex: none;
+  touch-action: none;
 }
 
 .sides__list {
@@ -1207,6 +1228,15 @@ textarea {
 
 .sides__unit {
   color: var(--ink-dim);
+}
+
+.sides__step {
+  flex: none;
+  min-width: 2.2rem;
+  min-height: 2.2rem;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .sides__even {
