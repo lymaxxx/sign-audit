@@ -187,8 +187,12 @@ export function analyseDrawing(dxf, plan) {
  * rotated.
  */
 export function suggestRecipe(analysis) {
-  // Prefer a sequential number over a building code repeated site-wide.
+  // Sign code first: it is the identifier the signage package is actually
+  // organised by. It is legitimately non-unique — two different physical
+  // signs of the same type share a code — which the sequential number never
+  // is, but uniqueness is not what makes a name useful here.
   const nameTag =
+    analysis.attributeTags.find((t) => /^(SC|SIGN.?CODE)$/i.test(t.tag))?.tag ??
     analysis.attributeTags.find((t) => /^(SG#|SGN|SEQ)/i.test(t.tag))?.tag ??
     analysis.attributeTags[0]?.tag ??
     null
@@ -262,6 +266,22 @@ function tagView(insert, nameTag) {
   }
 }
 
+/** A loose circle marker's box, so it can go through the same leader pairing
+ * as a block marker: a box centred on the circle, sized to its radius. */
+function looseMarkerView(marker, index) {
+  return {
+    id: `loose${index}`,
+    box: {
+      minX: marker.x - marker.radius,
+      minY: marker.y - marker.radius,
+      maxX: marker.x + marker.radius,
+      maxY: marker.y + marker.radius,
+    },
+    layer: marker.layer,
+    marker,
+  }
+}
+
 /**
  * Apply a recipe and produce the signs.
  * @returns {{signs: object[], links: Array<{from: object, to: object}>, unlinked: number}}
@@ -277,12 +297,20 @@ export function buildSigns(analysis, recipe) {
   )
   const tags = analysis.tagCandidates.filter((i) => recipe.tagBlocks.has(i.effectiveName))
 
-  const markerViews = markers.map((insert, index) => ({
+  const blockViews = markers.map((insert, index) => ({
     id: insert.handle ?? `m${index}`,
     box: insert.box,
     layer: insert.layer,
     insert,
   }))
+  // Loose markers join the SAME candidate list as block markers, before
+  // pairing runs, so a leader touching a circle links it exactly like a
+  // leader touching a block — there is no separate, weaker code path for them.
+  const looseViews = findLooseMarkers(analysis.entities, recipe.looseLayers).map(
+    looseMarkerView,
+  )
+  const markerViews = [...blockViews, ...looseViews]
+
   const tagViews = tags.map((insert) => tagView(insert, nameTag))
   const tagById = new Map(tagViews.map((t) => [t.id, t]))
 
@@ -296,8 +324,8 @@ export function buildSigns(analysis, recipe) {
   let unlinked = 0
 
   for (const view of markerViews) {
-    // A self-describing marker carries its own data and needs no leader.
-    const ownName = view.insert.attribs?.[nameTag]
+    // A self-describing block marker carries its own data and needs no leader.
+    const ownName = view.insert?.attribs?.[nameTag]
     let tag = ownName ? view : (tagById.get(paired.get(view.id)) ?? null)
 
     if (!tag && recipe.linkBy !== 'leader') {
@@ -305,10 +333,33 @@ export function buildSigns(analysis, recipe) {
       if (near) tag = near.tag
     }
 
-    const attribs = tag?.insert.attribs ?? {}
+    const attribs = tag?.insert?.attribs ?? {}
     const name = (attribs[nameTag] ?? '').trim()
     if (!tag) unlinked++
-    if (tag) links.push({ from: view.insert, to: tag.insert })
+    if (tag && view.insert) links.push({ from: view.insert, to: tag.insert })
+
+    if (view.marker) {
+      // A loose circle: position only ever came from the shape, never from a
+      // block, so sides are always left for the user regardless of linking.
+      signs.push({
+        id: `loose_${newId()}`,
+        name: name || 'Unnamed',
+        type: signType(view.marker.layer),
+        x: view.marker.x,
+        y: view.marker.y,
+        rotation: 0,
+        blockName: null,
+        layer: view.marker.layer,
+        source: 'loose',
+        status: name ? 'unchecked' : 'review',
+        notes: '',
+        sides: [{ id: 'A', bearing: 0 }],
+        data: attribs,
+        photos: {},
+        updatedAt: null,
+      })
+      continue
+    }
 
     signs.push({
       id: `cad_${view.insert.handle ?? newId()}`,
@@ -326,27 +377,6 @@ export function buildSigns(analysis, recipe) {
       notes: '',
       sides: seedSides(view.insert.innerText, view.insert.rotation ?? 0),
       data: attribs,
-      photos: {},
-      updatedAt: null,
-    })
-  }
-
-  // Loose circle markers: position only, sides left for the user.
-  for (const marker of findLooseMarkers(analysis.entities, recipe.looseLayers)) {
-    signs.push({
-      id: `loose_${newId()}`,
-      name: 'Unnamed',
-      type: signType(marker.layer),
-      x: marker.x,
-      y: marker.y,
-      rotation: 0,
-      blockName: null,
-      layer: marker.layer,
-      source: 'loose',
-      status: 'review',
-      notes: '',
-      sides: [{ id: 'A', bearing: 0 }],
-      data: {},
       photos: {},
       updatedAt: null,
     })

@@ -11,23 +11,35 @@ import { downloadBlob, exportProject, importProjectFile, signsToCsv } from './pe
  * every photo stays reachable.
  */
 function migrateProject(project) {
-  if (!project?.signs?.length) return project
+  if (!project) return project
   let changed = false
-  const signs = project.signs.map((sign) => {
-    if (Array.isArray(sign.sides)) return sign
+  let signs = project.signs
+
+  if (project.signs?.length) {
+    signs = project.signs.map((sign) => {
+      if (Array.isArray(sign.sides)) return sign
+      changed = true
+      const legacy = sign.photos ?? {}
+      return {
+        ...sign,
+        sides: [
+          { id: 'A', bearing: sign.rotation ?? 0 },
+          { id: 'B', bearing: ((sign.rotation ?? 0) + 180) % 360 },
+        ],
+        photos: { A: legacy.A ?? [], B: legacy.B ?? [] },
+        data: sign.data ?? {},
+      }
+    })
+  }
+
+  // Projects saved before tag/callout blocks were tracked separately have
+  // nothing to hide — harmless no-op, not "show everything that used to be
+  // hidden", since there was no such concept yet.
+  if (!Array.isArray(project.hiddenBlocks)) {
     changed = true
-    const legacy = sign.photos ?? {}
-    return {
-      ...sign,
-      sides: [
-        { id: 'A', bearing: sign.rotation ?? 0 },
-        { id: 'B', bearing: ((sign.rotation ?? 0) + 180) % 360 },
-      ],
-      photos: { A: legacy.A ?? [], B: legacy.B ?? [] },
-      data: sign.data ?? {},
-    }
-  })
-  return changed ? { ...project, signs } : project
+  }
+
+  return changed ? { ...project, signs, hiddenBlocks: project.hiddenBlocks ?? [] } : project
 }
 
 const AUTOSAVE_DELAY = 400
@@ -179,7 +191,7 @@ export function StoreProvider({ children }) {
       dismissError: () => dispatch({ type: 'error', error: null }),
 
       /** Commit a freshly parsed drawing as a new project. */
-      async createProject({ name, plan, planFile, signs }) {
+      async createProject({ name, plan, planFile, signs, hiddenBlocks }) {
         dispatch({ type: 'busy', busy: 'Saving project…' })
         try {
           const id = newId('prj')
@@ -193,6 +205,10 @@ export function StoreProvider({ children }) {
             bounds: plan.bounds,
             layers: plan.layers,
             showLabels: true,
+            // Tag/callout block names never drawn on this project's plan —
+            // "only used for sign naming" holds for its whole life, not just
+            // while setting it up.
+            hiddenBlocks: hiddenBlocks ?? [],
             signs,
           }
           const planRecord = {
@@ -200,6 +216,7 @@ export function StoreProvider({ children }) {
             fileName: plan.fileName,
             paths: plan.paths,
             labels: plan.labels,
+            layerBounds: plan.layerBounds,
             stats: plan.stats,
           }
           await db.putPlan(planRecord)

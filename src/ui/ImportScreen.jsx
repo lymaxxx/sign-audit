@@ -3,6 +3,7 @@ import { buildPlan } from '../dxf/flatten.js'
 import { looksLikeDxf, parseDxf } from '../dxf/parse.js'
 import { auditDxf, describeLosses, reconcile } from '../dxf/audit.js'
 import { analyseDrawing, buildSigns, suggestRecipe } from '../dxf/detectSigns.js'
+import { unionBounds } from '../dxf/geometry.js'
 import { useStore } from '../state/storeContext.js'
 import OfflineNotice from './OfflineNotice.jsx'
 import PlanView from '../map/PlanView.jsx'
@@ -69,6 +70,22 @@ export default function ImportScreen() {
     return buildSigns(draft.analysis, recipe)
   }, [draft, recipe])
 
+  // Raw block names whose geometry should never be drawn: callouts classified
+  // as "data" and not also "marker" — a self-describing block plays both
+  // roles and is the visible sign symbol, so it stays on the plan. Keyed off
+  // each insert's raw name so dynamic-block variants (`*U22`) are covered
+  // alongside the named block they resolve to.
+  const hiddenBlocks = useMemo(() => {
+    const set = new Set()
+    if (!draft || !recipe) return set
+    for (const insert of draft.analysis.inserts) {
+      if (recipe.tagBlocks.has(insert.effectiveName) && !recipe.markerBlocks.has(insert.effectiveName)) {
+        set.add(insert.blockName)
+      }
+    }
+    return set
+  }, [draft, recipe])
+
   // The preview reuses the real plan renderer, so what you approve here is
   // literally what the audit screen will draw.
   const previewProject = useMemo(() => {
@@ -101,12 +118,28 @@ export default function ImportScreen() {
           : new Set([...current.tagBlocks].filter((n) => n !== blockName)),
     }))
 
+  // A layer toggle can hide whatever the view was centred on. Refit to
+  // whatever is still visible rather than leaving the viewport looking empty.
+  const hiddenLayersKey = [...hidden].sort().join('\n')
+  useEffect(() => {
+    if (!draft?.plan?.layerBounds) return
+    const bounds = unionBounds(draft.plan.layerBounds, hidden) ?? draft.plan.bounds
+    viewport.fitTo(bounds)
+    // hiddenLayersKey is the real dependency; draft/viewport are stable for
+    // the life of one loaded drawing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenLayersKey])
+
   const create = () => {
     actions.createProject({
       name: name.trim() || 'Signage audit',
       plan: { ...draft.plan, layers: previewProject.layers },
       planFile: draft.file,
       signs: preview.signs,
+      // Persisted so the real audit screen never draws tag-block geometry
+      // either — "only used for sign naming" holds for the whole life of the
+      // project, not just while setting it up.
+      hiddenBlocks: [...hiddenBlocks],
     })
   }
 
@@ -141,7 +174,23 @@ export default function ImportScreen() {
               addMode={false}
               onAddAt={() => {}}
               viewport={viewport}
+              hiddenBlocks={hiddenBlocks}
             />
+            <div className="plan__tools">
+              <button
+                type="button"
+                title="Fit plan"
+                onClick={() => viewport.fitTo(unionBounds(plan.layerBounds, hidden) ?? plan.bounds)}
+              >
+                ⤢
+              </button>
+              <button type="button" onClick={() => viewport.zoomBy(1.6)} aria-label="Zoom in">
+                +
+              </button>
+              <button type="button" onClick={() => viewport.zoomBy(1 / 1.6)} aria-label="Zoom out">
+                −
+              </button>
+            </div>
             <p className="plan__note">
               {preview.signs.length} sign{preview.signs.length === 1 ? '' : 's'} ·{' '}
               {preview.links.length} matched to a callout
