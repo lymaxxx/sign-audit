@@ -1,83 +1,18 @@
 /**
  * DXF file -> parsed document.
  *
- * Wraps `dxf-parser` and fills in the one gap that matters for this app:
- * the library ships a handler for ATTDEF (attribute *definitions*, which live
- * inside a block definition) but none for ATTRIB (attribute *values*, which
- * follow each INSERT in the entity stream). Sign names on a real drawing are
- * almost always ATTRIB values, so without this they would be dropped silently.
+ * Wraps `dxf-parser`, registering the extra entity handlers in `handlers.js`
+ * that fill the library's gaps, and turning its internal failures into
+ * something a person can act on.
  */
 
 import DxfParser from 'dxf-parser'
 import log from 'loglevel'
+import { EXTRA_HANDLERS } from './handlers.js'
 
 // dxf-parser logs a warning for every entity type it has no handler for.
-// A drawing with thousands of SEQENDs or hatches would spend real time in
-// console formatting alone.
+// A drawing with thousands of them would spend real time in console formatting.
 log.setLevel('error')
-
-/**
- * Parses ATTRIB the way dxf-parser's own handlers do: read groups until the
- * next 0-code. Point components are read as individual codes rather than via
- * the library's parsePoint helper, to avoid a deep import into its internals.
- */
-class AttribHandler {
-  constructor() {
-    this.ForEntityName = 'ATTRIB'
-  }
-
-  parseEntity(scanner, curr) {
-    const entity = { type: curr.value }
-    curr = scanner.next()
-    while (!scanner.isEOF()) {
-      if (curr.code === 0) break
-      switch (curr.code) {
-        case 1: // the attribute's value — this is the sign name
-          entity.text = curr.value
-          break
-        case 2: // the attribute's tag — which field this is
-          entity.tag = curr.value
-          break
-        case 8:
-          entity.layer = curr.value
-          break
-        case 10:
-          entity.x = curr.value
-          break
-        case 20:
-          entity.y = curr.value
-          break
-        case 40:
-          entity.textHeight = curr.value
-          break
-        case 50:
-          entity.rotation = curr.value
-          break
-        case 70:
-          entity.invisible = (curr.value & 0x01) !== 0
-          break
-        default:
-          break
-      }
-      curr = scanner.next()
-    }
-    return entity
-  }
-}
-
-/** SEQEND carries nothing we need; a no-op handler keeps it out of the logs. */
-class SeqEndHandler {
-  constructor() {
-    this.ForEntityName = 'SEQEND'
-  }
-
-  parseEntity(scanner, curr) {
-    const entity = { type: curr.value }
-    curr = scanner.next()
-    while (!scanner.isEOF() && curr.code !== 0) curr = scanner.next()
-    return entity
-  }
-}
 
 /**
  * ATTRIBs follow their INSERT in file order, terminated by SEQEND. Hang them
@@ -106,16 +41,78 @@ function attachAttributes(entities) {
 }
 
 /**
+ * Turn a library exception into a message that says what to do about it.
+ *
+ * The raw errors are group-code level ("Expected code for point value to be 20
+ * but got 30") and mean nothing to someone holding a drawing.
+ */
+export function explainParseFailure(error, audit) {
+  const message = String(error?.message ?? error)
+  const where = audit?.lastEntity ? ` The last entity read was ${audit.lastEntity}.` : ''
+
+  if (/Unexpected end of input|after EOF group/.test(message)) {
+    return `The drawing appears to be truncated — it ends part-way through. Re-export it from your CAD application and try again.${where}`
+  }
+  if (/Expected code for point value/.test(message)) {
+    return `A coordinate in the drawing is malformed, and this DXF reader stops at the first one.${where} Re-saving the file as DXF from AutoCAD usually cleans this up.`
+  }
+  if (/Empty file/.test(message)) {
+    return 'That file is empty.'
+  }
+  if (/cannot be cast to Boolean/.test(message)) {
+    return `The drawing contains a malformed flag value.${where} Re-exporting as DXF usually cleans this up.`
+  }
+  return `This drawing could not be read: ${message}${where}`
+}
+
+/**
  * @param {string} text raw DXF file contents
  * @returns {{header: object, entities: object[], blocks: object, tables: object}}
- * @throws if the file is not parseable as DXF
+ * @throws {Error} with a human-readable message
  */
-export function parseDxf(text) {
-  const parser = new DxfParser()
-  parser.registerEntityHandler(AttribHandler)
-  parser.registerEntityHandler(SeqEndHandler)
+/**
+ * Close off a file that stops part-way through.
+ *
+ * The scanner throws the moment it runs out of groups while still looking for
+ * a section end, which loses everything that was read up to that point. A
+ * drawing that was cut short in transfer is still mostly intact, and mostly
+ * intact is far more useful to someone on site than an error message, so the
+ * closing markers are supplied and the parse retried.
+ */
+function closeTruncated(text) {
+  const lines = text.replace(/\s+$/, '').split(/\r\n|\r|\n/)
+  // A DXF is a stream of code/value line pairs. A file cut mid-pair leaves a
+  // dangling code, which offsets every pair after it — so drop it before
+  // appending anything, or the repair is worse than the damage.
+  if (lines.length % 2 !== 0) lines.pop()
+  // Close whatever might still be open. The parser skips terminators it is not
+  // looking for, so an unnecessary one is harmless; a missing one is fatal.
+  lines.push('  0', 'ENDBLK', '  0', 'ENDSEC', '  0', 'EOF')
+  return `${lines.join('\n')}\n`
+}
 
-  const dxf = parser.parseSync(text)
+export function parseDxf(text, audit = null) {
+  const parse = (source) => {
+    const parser = new DxfParser()
+    for (const Handler of EXTRA_HANDLERS) parser.registerEntityHandler(Handler)
+    return parser.parseSync(source)
+  }
+
+  let dxf
+  try {
+    dxf = parse(text)
+  } catch (error) {
+    if (/Unexpected end of input|after EOF group/.test(String(error?.message))) {
+      try {
+        dxf = parse(closeTruncated(text))
+        if (dxf) dxf.recovered = 'truncated'
+      } catch {
+        throw new Error(explainParseFailure(error, audit), { cause: error })
+      }
+    } else {
+      throw new Error(explainParseFailure(error, audit), { cause: error })
+    }
+  }
   if (!dxf) throw new Error('This file could not be read as a DXF drawing.')
 
   dxf.entities = attachAttributes(dxf.entities ?? [])

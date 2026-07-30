@@ -310,6 +310,100 @@ function emitSpline(out, bounds, m, entity) {
   if (entity.closed) out.push('Z')
 }
 
+/* ----------------------------------------------------------------- hatches */
+
+/** Tessellate an arc into the *current* subpath, keeping a boundary closed. */
+function appendArc(out, bounds, m, cx, cy, r, a0, a1, ccw) {
+  let sweep = ccw ? a1 - a0 : a0 - a1
+  while (sweep <= 0) sweep += TAU
+  while (sweep > TAU) sweep -= TAU
+  const steps = arcSegments(sweep)
+  for (let i = 1; i <= steps; i++) {
+    const a = a0 + (ccw ? 1 : -1) * (sweep * i) / steps
+    xf(m, cx + r * Math.cos(a), cy + r * Math.sin(a))
+    lineTo(out, bounds, px, py)
+  }
+}
+
+/**
+ * HATCH boundary loops.
+ *
+ * Each loop becomes one closed subpath, so a solid hatch fills correctly with
+ * the even-odd rule (which is what makes a ring-shaped hatch keep its hole).
+ * Curved edges are tessellated into the running subpath rather than emitted as
+ * arc commands, because a boundary must stay continuous to fill.
+ */
+function emitHatch(out, bounds, m, entity) {
+  let drew = false
+
+  for (const loop of entity.loops ?? []) {
+    if (loop.vertices?.length) {
+      emitVertices(out, bounds, m, loop.vertices, true)
+      drew = true
+      continue
+    }
+
+    let started = false
+    for (const edge of loop.edges ?? []) {
+      if (edge.type === 'line') {
+        if (!Number.isFinite(edge.x1) || !Number.isFinite(edge.x2)) continue
+        if (!started) {
+          xf(m, edge.x1, edge.y1)
+          moveTo(out, bounds, px, py)
+          started = true
+        }
+        xf(m, edge.x2, edge.y2)
+        lineTo(out, bounds, px, py)
+      } else if (edge.type === 'arc' && edge.radius > 0) {
+        const a0 = ((edge.startAngle ?? 0) * Math.PI) / 180
+        const a1 = ((edge.endAngle ?? 360) * Math.PI) / 180
+        if (!started) {
+          xf(m, edge.x + edge.radius * Math.cos(a0), edge.y + edge.radius * Math.sin(a0))
+          moveTo(out, bounds, px, py)
+          started = true
+        }
+        appendArc(out, bounds, m, edge.x, edge.y, edge.radius, a0, a1, edge.counterclockwise !== false)
+      } else if (edge.type === 'ellipse') {
+        const major = Math.hypot(edge.majorX ?? 0, edge.majorY ?? 0)
+        const minor = major * (edge.ratio ?? 1)
+        const rot = Math.atan2(edge.majorY ?? 0, edge.majorX ?? 0)
+        const a0 = ((edge.startAngle ?? 0) * Math.PI) / 180
+        let a1 = ((edge.endAngle ?? 360) * Math.PI) / 180
+        if (a1 <= a0) a1 += TAU
+        const steps = arcSegments(a1 - a0)
+        for (let i = 0; i <= steps; i++) {
+          const t = a0 + ((a1 - a0) * i) / steps
+          const ex = major * Math.cos(t)
+          const ey = minor * Math.sin(t)
+          xf(m, edge.x + ex * Math.cos(rot) - ey * Math.sin(rot), edge.y + ex * Math.sin(rot) + ey * Math.cos(rot))
+          if (!started && i === 0) {
+            moveTo(out, bounds, px, py)
+            started = true
+          } else {
+            lineTo(out, bounds, px, py)
+          }
+        }
+      } else if (edge.type === 'polyline' && edge.vertices?.length) {
+        edge.vertices.forEach((v, i) => {
+          xf(m, v.x, v.y)
+          if (!started && i === 0) {
+            moveTo(out, bounds, px, py)
+            started = true
+          } else {
+            lineTo(out, bounds, px, py)
+          }
+        })
+      }
+    }
+    if (started) {
+      out.push('Z')
+      drew = true
+    }
+  }
+
+  return drew
+}
+
 /* --------------------------------------------------------------- ellipses */
 
 function emitEllipse(out, bounds, m, entity) {
@@ -382,6 +476,9 @@ export function emitEntity(entity, m, out, bounds) {
       )
       return true
     }
+
+    case 'HATCH':
+      return emitHatch(out, bounds, m, entity)
 
     case 'ELLIPSE':
       emitEllipse(out, bounds, m, entity)

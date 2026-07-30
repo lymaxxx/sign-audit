@@ -40,12 +40,17 @@ section('HEADER', () => {
 
 /* ------------------------------------------------------------------ tables */
 
+// Sign type comes from the layer, mirroring how a real signage package is
+// drawn: one layer per family, with a leading underscore so they sort together.
 const LAYERS = [
   ['WALLS', 7], // white
   ['SERVICES', 4], // cyan
   ['TEXT', 3], // green
-  ['SIGNAGE', 2], // yellow
   ['DOORS', 8], // grey
+  ['_WAYFINDING_SIGN', 2],
+  ['_DIRECTIONAL_SIGN', 5],
+  ['_IDENTIFICATION_SIGN', 6],
+  ['_REGULATORY_SIGN', 1],
 ]
 
 section('TABLES', () => {
@@ -180,10 +185,18 @@ section('BLOCKS', () => {
 
 /* ---------------------------------------------------------------- entities */
 
+const SIGN_LAYERS = {
+  WF: '_WAYFINDING_SIGN',
+  DIR: '_DIRECTIONAL_SIGN',
+  ID: '_IDENTIFICATION_SIGN',
+  REG: '_REGULATORY_SIGN',
+}
+
 const insertSign = (x, y, rotation, name) => {
+  const layer = SIGN_LAYERS[name.split('_')[0]] ?? '_WAYFINDING_SIGN'
   g(0, 'INSERT')
   g(66, 1) // attributes follow
-  g(8, 'SIGNAGE')
+  g(8, layer)
   g(2, 'SIGN')
   g(10, x)
   g(20, y)
@@ -194,7 +207,7 @@ const insertSign = (x, y, rotation, name) => {
   g(50, rotation)
 
   g(0, 'ATTRIB')
-  g(8, 'SIGNAGE')
+  g(8, layer)
   g(10, x)
   g(20, y + 1.1)
   g(30, 0)
@@ -204,7 +217,7 @@ const insertSign = (x, y, rotation, name) => {
   g(70, 0)
 
   g(0, 'SEQEND')
-  g(8, 'SIGNAGE')
+  g(8, layer)
 }
 
 section('ENTITIES', () => {
@@ -287,7 +300,7 @@ section('ENTITIES', () => {
   // The nested assembly, without attributes: names for these come from the
   // block name unless the user picks another source.
   g(0, 'INSERT')
-  g(8, 'SIGNAGE')
+  g(8, '_WAYFINDING_SIGN')
   g(2, 'SIGN_ASSEMBLY')
   g(10, 36)
   g(20, 20)

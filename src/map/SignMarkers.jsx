@@ -33,6 +33,22 @@ function Marker({ sign, k, selected, onSelect, showName }) {
       {/* Invisible touch target: markers stay tappable at a 44px finger size
           even though the visible dot is much smaller. */}
       <circle r={HIT_RADIUS} fill="transparent" />
+      {/* One tick per face, pointing the way that face looks. Bearings are in
+          the drawing's frame, so the tick is negated to survive the Y flip
+          this group already undoes. */}
+      {(sign.sides ?? []).map((side, index) => (
+        <line
+          key={side.id ?? index}
+          x1={0}
+          y1={0}
+          x2={Math.cos((-side.bearing * Math.PI) / 180) * (BODY + 8)}
+          y2={Math.sin((-side.bearing * Math.PI) / 180) * (BODY + 8)}
+          stroke={status.color}
+          strokeWidth={2}
+          strokeLinecap="round"
+          opacity={0.85}
+        />
+      ))}
       {selected && <circle r={BODY + 7} fill="none" stroke="#ffffff" strokeWidth={2} />}
       <circle
         r={BODY}

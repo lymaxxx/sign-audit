@@ -1,10 +1,34 @@
 import { useEffect, useMemo, useReducer, useRef } from 'react'
 import { StoreContext } from './storeContext.js'
 import * as db from './db.js'
-import { signType } from '../dxf/detectSigns.js'
 import { newId } from '../util/id.js'
 import { preparePhoto } from '../util/image.js'
 import { downloadBlob, exportProject, importProjectFile, signsToCsv } from './persist.js'
+
+/**
+ * Projects saved before signs had an editable side list stored photos under a
+ * fixed A/B pair. Rebuild that shape on load so old audits keep both slots and
+ * every photo stays reachable.
+ */
+function migrateProject(project) {
+  if (!project?.signs?.length) return project
+  let changed = false
+  const signs = project.signs.map((sign) => {
+    if (Array.isArray(sign.sides)) return sign
+    changed = true
+    const legacy = sign.photos ?? {}
+    return {
+      ...sign,
+      sides: [
+        { id: 'A', bearing: sign.rotation ?? 0 },
+        { id: 'B', bearing: ((sign.rotation ?? 0) + 180) % 360 },
+      ],
+      photos: { A: legacy.A ?? [], B: legacy.B ?? [] },
+      data: sign.data ?? {},
+    }
+  })
+  return changed ? { ...project, signs } : project
+}
 
 const AUTOSAVE_DELAY = 400
 
@@ -17,13 +41,12 @@ const initialState = {
 }
 
 function patchSign(signs, id, patch) {
-  return signs.map((sign) => {
-    if (sign.id !== id) return sign
-    const next = { ...sign, ...patch, updatedAt: Date.now() }
-    // Type is always derived from the name, never stored independently.
-    if (patch.name != null) next.type = signType(next.name)
-    return next
-  })
+  // Type comes from the layer the sign was found on, so renaming a sign no
+  // longer reclassifies it — a correction to a sign's number should not quietly
+  // move it into a different filter group.
+  return signs.map((sign) =>
+    sign.id === id ? { ...sign, ...patch, updatedAt: Date.now() } : sign,
+  )
 }
 
 function reducer(state, action) {
@@ -122,7 +145,7 @@ export function StoreProvider({ children }) {
           dispatch({ type: 'none' })
           return
         }
-        const project = projects[0]
+        const project = migrateProject(projects[0])
         const plan = await db.getPlan(project.id)
         if (cancelled) return
         lastSaved.current = project
@@ -193,7 +216,7 @@ export function StoreProvider({ children }) {
       async openProject(id) {
         dispatch({ type: 'loading' })
         try {
-          const project = await db.getProject(id)
+          const project = migrateProject(await db.getProject(id))
           if (!project) {
             dispatch({ type: 'none' })
             return
@@ -215,7 +238,7 @@ export function StoreProvider({ children }) {
             dispatch({ type: 'none' })
             return
           }
-          const project = remaining[0]
+          const project = migrateProject(remaining[0])
           const plan = await db.getPlan(project.id)
           lastSaved.current = project
           dispatch({ type: 'loaded', project, plan: plan ?? null })
@@ -233,12 +256,14 @@ export function StoreProvider({ children }) {
 
       updateSign: (id, patch) => dispatch({ type: 'updateSign', id, patch }),
 
-      addSign({ x, y, name }) {
+      addSign({ x, y, name, type }) {
         const clean = (name ?? '').trim() || 'NEW_SIGN'
         const sign = {
           id: newId('sgn'),
           name: clean,
-          type: signType(clean),
+          // Signs added on site have no layer to take a type from, so they land
+          // in their own group until the user says otherwise.
+          type: type ?? 'Added on site',
           x,
           y,
           rotation: 0,
@@ -248,7 +273,9 @@ export function StoreProvider({ children }) {
           // Signs added on site are proposals until someone decides otherwise.
           status: 'proposed',
           notes: '',
-          photos: { A: [], B: [] },
+          sides: [{ id: 'A', bearing: 0 }],
+          data: {},
+          photos: {},
           updatedAt: Date.now(),
         }
         dispatch({ type: 'addSign', sign })
@@ -256,8 +283,8 @@ export function StoreProvider({ children }) {
       },
 
       async removeSign(id, sign) {
-        for (const side of ['A', 'B']) {
-          for (const photoId of sign?.photos?.[side] ?? []) {
+        for (const ids of Object.values(sign?.photos ?? {})) {
+          for (const photoId of ids ?? []) {
             await db.deletePhoto(photoId).catch(() => {})
           }
         }
