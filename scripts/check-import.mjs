@@ -111,7 +111,14 @@ check(
   ),
   JSON.stringify(byType),
 )
-check('eleven signs, no nested double-count', signs.length === 11, `got ${signs.length}`)
+// Ten named block markers + SIGN_ASSEMBLY (self-describing, unlinked) + the
+// loose circle marker linked through its leader to TAG_HEAD.
+check('twelve signs, no nested double-count', signs.length === 12, `got ${signs.length}`)
+check(
+  'loose circle marker linked through its leader',
+  signs.find((s) => s.source === 'loose')?.name === 'LOOSE_01',
+  JSON.stringify(signs.find((s) => s.source === 'loose')),
+)
 check(
   'every named sign starts unchecked',
   signs.filter((s) => s.name.startsWith('WF_')).every((s) => s.status === 'unchecked'),

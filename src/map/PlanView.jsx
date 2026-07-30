@@ -14,12 +14,13 @@ import { visibleBounds } from './useViewport.js'
 // Below this on-screen height, plan text is an unreadable smudge and is skipped.
 const MIN_LABEL_PX = 6
 
-const LayerPaths = memo(function LayerPaths({ paths, hiddenKey }) {
+const LayerPaths = memo(function LayerPaths({ paths, hiddenKey, hiddenBlocksKey }) {
   const hidden = new Set(hiddenKey ? hiddenKey.split('\n') : [])
+  const hiddenBlocks = new Set(hiddenBlocksKey ? hiddenBlocksKey.split('\n') : [])
   return (
     <g strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
       {paths.map((path, index) =>
-        hidden.has(path.layer) ? null : path.filled ? (
+        hidden.has(path.layer) || (path.sourceBlock && hiddenBlocks.has(path.sourceBlock)) ? null : path.filled ? (
           // Solid hatches. even-odd keeps holes in ring-shaped fills, and the
           // slight transparency stops a large filled area burying line work.
           <path
@@ -44,8 +45,9 @@ const LayerPaths = memo(function LayerPaths({ paths, hiddenKey }) {
   )
 })
 
-const Labels = memo(function Labels({ labels, view, size, hiddenKey }) {
+const Labels = memo(function Labels({ labels, view, size, hiddenKey, hiddenBlocksKey }) {
   const hidden = new Set(hiddenKey ? hiddenKey.split('\n') : [])
+  const hiddenBlocks = new Set(hiddenBlocksKey ? hiddenBlocksKey.split('\n') : [])
   const box = visibleBounds(view, size, 200)
   const minSize = MIN_LABEL_PX / (view.scale || 1)
 
@@ -53,6 +55,7 @@ const Labels = memo(function Labels({ labels, view, size, hiddenKey }) {
     (l) =>
       l.size >= minSize &&
       !hidden.has(l.layer) &&
+      !(l.sourceBlock && hiddenBlocks.has(l.sourceBlock)) &&
       (!box || (l.x >= box.minX && l.x <= box.maxX && l.y >= box.minY && l.y <= box.maxY)),
   )
 
@@ -84,6 +87,7 @@ export default function PlanView({
   addMode,
   onAddAt,
   viewport,
+  hiddenBlocks,
 }) {
   const { containerRef, size, view, transform, handlers, toWorld, fitTo, wasDrag } = viewport
   const fittedFor = useRef(null)
@@ -100,6 +104,7 @@ export default function PlanView({
     .filter((l) => !l.visible)
     .map((l) => l.name)
     .join('\n')
+  const hiddenBlocksKey = [...(hiddenBlocks ?? [])].join('\n')
 
   return (
     <div
@@ -114,9 +119,17 @@ export default function PlanView({
     >
       <svg className="plan__svg" width="100%" height="100%" role="presentation">
         <g transform={transform}>
-          {plan?.paths?.length ? <LayerPaths paths={plan.paths} hiddenKey={hiddenKey} /> : null}
+          {plan?.paths?.length ? (
+            <LayerPaths paths={plan.paths} hiddenKey={hiddenKey} hiddenBlocksKey={hiddenBlocksKey} />
+          ) : null}
           {project?.showLabels && plan?.labels?.length ? (
-            <Labels labels={plan.labels} view={view} size={size} hiddenKey={hiddenKey} />
+            <Labels
+              labels={plan.labels}
+              view={view}
+              size={size}
+              hiddenKey={hiddenKey}
+              hiddenBlocksKey={hiddenBlocksKey}
+            />
           ) : null}
           <SignMarkers
             signs={signs}

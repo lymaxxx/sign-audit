@@ -181,6 +181,22 @@ section('BLOCKS', () => {
     g(43, 1)
     g(50, 0)
   })
+
+  // A pure data callout, on a non-signage layer, carrying no geometry of its
+  // own — the real-world convention this fixture otherwise doesn't exercise:
+  // name and position live in two different places, joined only by a leader.
+  block('TAG_HEAD', () => {
+    g(0, 'ATTDEF')
+    g(8, '0')
+    g(10, 0)
+    g(20, 0)
+    g(30, 0)
+    g(40, 0.25)
+    g(1, 'TAG_NAME')
+    g(3, 'Sign name')
+    g(2, 'NAME')
+    g(70, 0)
+  })
 })
 
 /* ---------------------------------------------------------------- entities */
@@ -306,6 +322,43 @@ section('ENTITIES', () => {
   g(20, 20)
   g(30, 0)
   g(50, 45)
+
+  // A loose (non-block) sign marker: a circle with a centre point, on a
+  // signage layer, linked to its data by a leader — the case block markers
+  // already handle, exercised here for the shape-only variant instead.
+  circle('_IDENTIFICATION_SIGN', 33, 20, 0.4)
+  g(0, 'POINT')
+  g(8, '_IDENTIFICATION_SIGN')
+  g(10, 33)
+  g(20, 20)
+  g(30, 0)
+
+  lwpolyline('TEXT', [
+    [33, 20.4],
+    [33, 21],
+    [36, 21],
+  ], false)
+
+  g(0, 'INSERT')
+  g(8, 'TEXT')
+  g(2, 'TAG_HEAD')
+  g(10, 36)
+  g(20, 21)
+  g(30, 0)
+  g(50, 0)
+
+  g(0, 'ATTRIB')
+  g(8, 'TEXT')
+  g(10, 36)
+  g(20, 21.3)
+  g(30, 0)
+  g(40, 0.25)
+  g(1, 'LOOSE_01')
+  g(2, 'NAME')
+  g(70, 0)
+
+  g(0, 'SEQEND')
+  g(8, 'TEXT')
 })
 
 g(0, 'EOF')

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PlanView from './map/PlanView.jsx'
 import { useViewport } from './map/useViewport.js'
+import { unionBounds } from './dxf/geometry.js'
 import Filters from './ui/Filters.jsx'
 import ImportScreen from './ui/ImportScreen.jsx'
 import LayerToggle from './ui/LayerToggle.jsx'
@@ -142,6 +143,26 @@ export default function App() {
     return () => document.removeEventListener('pointerdown', close)
   }, [menuOpen])
 
+  const hiddenLayers = useMemo(
+    () => new Set((project?.layers ?? []).filter((l) => !l.visible).map((l) => l.name)),
+    [project?.layers],
+  )
+  // Sorted, joined key so the effect below only re-fires when the actual set
+  // of hidden layers changes, not on every render.
+  const hiddenLayersKey = [...hiddenLayers].sort().join('\n')
+
+  // A layer toggle can hide whatever the view was centred on, leaving the
+  // viewport looking empty. Refit to whatever is still visible rather than
+  // leaving the user stuck looking at nothing.
+  useEffect(() => {
+    if (!plan?.layerBounds || !project) return
+    const bounds = unionBounds(plan.layerBounds, hiddenLayers) ?? project.bounds
+    viewport.fitTo(bounds)
+    // hiddenLayersKey is the real dependency; plan/project/viewport are stable
+    // references for the life of one open project.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenLayersKey])
+
   if (status === 'loading') {
     return (
       <div className="screen">
@@ -282,10 +303,17 @@ export default function App() {
             addMode={addMode}
             onAddAt={addSignAt}
             viewport={viewport}
+            hiddenBlocks={project.hiddenBlocks}
           />
 
           <div className="plan__tools">
-            <button type="button" onClick={() => viewport.fitTo(project.bounds)} title="Fit plan">
+            <button
+              type="button"
+              onClick={() =>
+                viewport.fitTo(unionBounds(plan?.layerBounds, hiddenLayers) ?? project.bounds)
+              }
+              title="Fit plan"
+            >
               ⤢
             </button>
             <button type="button" onClick={() => viewport.zoomBy(1.6)} aria-label="Zoom in">

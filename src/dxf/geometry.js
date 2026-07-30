@@ -95,6 +95,30 @@ function track(bounds, x, y) {
   if (y > bounds.maxY) bounds.maxY = y
 }
 
+/**
+ * Union of per-layer bounds, excluding hidden layers. Used to refit the
+ * viewport onto whatever is actually visible after a layer toggle, rather
+ * than sitting at the whole drawing's extent (which may put the remaining
+ * content far outside the current view, or make it too small to see).
+ * @param {Record<string, {minX:number,minY:number,maxX:number,maxY:number}>} layerBounds
+ * @param {Set<string>} [hidden] layer names to exclude
+ * @returns bounds, or null if every layer is hidden or empty
+ */
+export function unionBounds(layerBounds, hidden) {
+  const result = emptyBounds()
+  let any = false
+  for (const [layer, b] of Object.entries(layerBounds ?? {})) {
+    if (hidden?.has(layer)) continue
+    if (isEmptyBounds(b)) continue
+    any = true
+    if (b.minX < result.minX) result.minX = b.minX
+    if (b.minY < result.minY) result.minY = b.minY
+    if (b.maxX > result.maxX) result.maxX = b.maxX
+    if (b.maxY > result.maxY) result.maxY = b.maxY
+  }
+  return any ? result : null
+}
+
 /* -------------------------------------------------------------- formatting */
 
 /** Round to 0.001 and drop exponential notation, which SVG paths reject. */

@@ -12,6 +12,7 @@ import {
   emitEntity,
   emptyBounds,
   insertMatrix,
+  isEmptyBounds,
   multiply,
   textPlacement,
 } from './geometry.js'
@@ -90,7 +91,19 @@ function insertGrid(insert) {
  * @param {{fileName?: string}} [meta]
  */
 export function buildPlan(dxf, meta = {}) {
-  const bounds = emptyBounds()
+  // Bounds are tracked per layer, not just once globally, so a layer toggle
+  // can refit the viewport to whatever is actually still visible rather than
+  // sitting at the whole drawing's extent (see unionBounds in geometry.js).
+  const layerBoundsMap = new Map()
+  const boundsFor = (layer) => {
+    let b = layerBoundsMap.get(layer)
+    if (!b) {
+      b = emptyBounds()
+      layerBoundsMap.set(layer, b)
+    }
+    return b
+  }
+
   const colors = layerColors(dxf)
   const buckets = new Map()
   const labels = []
@@ -104,12 +117,21 @@ export function buildPlan(dxf, meta = {}) {
   // The bucket carries its own layer/colour rather than encoding them in the
   // key, because layer names routinely contain spaces, dashes and dollar signs.
   // Filled and stroked geometry are kept apart so each can be painted its own
-  // way without splitting the bake into one path per entity.
-  const bucketFor = (layer, color, filled) => {
-    const key = `${filled ? 'fill' : 'stroke'}|${layer}|${color}`
+  // way without splitting the bake into one path per entity. `sourceBlock` (the
+  // raw name of the nearest enclosing top-level INSERT, or null for entities
+  // not inside any block) is also part of the key: it is what lets the app
+  // hide a tag/callout block's geometry later, once sign detection decides
+  // which blocks play that role — a decision made only after this baking runs,
+  // and one layer-visibility toggle alone cannot express, since a tag block and
+  // a marker block routinely share the same CAD layer. This only fragments
+  // buckets for insert-sourced geometry — raw model-space drafting (the bulk of
+  // a large drawing) has no enclosing INSERT and keeps merging into one bucket
+  // per layer exactly as before.
+  const bucketFor = (layer, color, filled, sourceBlock) => {
+    const key = `${filled ? 'fill' : 'stroke'}|${layer}|${color}|${sourceBlock ?? ''}`
     let bucket = buckets.get(key)
     if (!bucket) {
-      bucket = { layer, color, filled, commands: [] }
+      bucket = { layer, color, filled, sourceBlock: sourceBlock ?? null, commands: [] }
       buckets.set(key, bucket)
     }
     return bucket.commands
@@ -125,6 +147,11 @@ export function buildPlan(dxf, meta = {}) {
    * @param {string[]} blockPath names of the blocks currently being expanded
    */
   const walk = (entities, matrix, depth, inheritedLayer, inheritedColor, textSink, blockPath) => {
+    // The outermost INSERT this entity is being expanded from, or null for
+    // entities placed directly in model space. Fixed for the whole call, since
+    // blockPath only changes across a recursive call, not within one.
+    const sourceBlock = blockPath.length ? blockPath[0] : null
+
     for (const entity of entities) {
       if (!entity || entity.visible === false) continue
       if (IGNORED_TYPES.has(entity.type)) continue
@@ -197,7 +224,7 @@ export function buildPlan(dxf, meta = {}) {
         if (!text) continue
         if (textSink) textSink.push(text)
         if (labels.length < MAX_LABELS) {
-          labels.push({ layer, color, text, ...textPlacement(entity, matrix) })
+          labels.push({ layer, color, text, sourceBlock, ...textPlacement(entity, matrix) })
         }
         usedLayers.add(layer)
         rendered.set(entity.type, (rendered.get(entity.type) ?? 0) + 1)
@@ -212,8 +239,8 @@ export function buildPlan(dxf, meta = {}) {
       }
 
       const filled = entity.type === 'HATCH' && entity.solid === true
-      const out = bucketFor(layer, color, filled)
-      if (emitEntity(entity, matrix, out, bounds)) {
+      const out = bucketFor(layer, color, filled, sourceBlock)
+      if (emitEntity(entity, matrix, out, boundsFor(layer))) {
         usedLayers.add(layer)
         rendered.set(entity.type, (rendered.get(entity.type) ?? 0) + 1)
       } else {
@@ -224,23 +251,26 @@ export function buildPlan(dxf, meta = {}) {
 
   walk(dxf.entities ?? [], IDENTITY, 0, null, null, null, [])
 
-  // Labels sit outside emitEntity, so fold them into the bounds separately.
+  // Labels and sign markers sit outside emitEntity, so fold them into their
+  // layer's bounds separately.
   for (const l of labels) {
-    if (l.x < bounds.minX) bounds.minX = l.x
-    if (l.y < bounds.minY) bounds.minY = l.y
-    if (l.x > bounds.maxX) bounds.maxX = l.x
-    if (l.y > bounds.maxY) bounds.maxY = l.y
+    const b = boundsFor(l.layer)
+    if (l.x < b.minX) b.minX = l.x
+    if (l.y < b.minY) b.minY = l.y
+    if (l.x > b.maxX) b.maxX = l.x
+    if (l.y > b.maxY) b.maxY = l.y
   }
   for (const i of inserts) {
-    if (i.x < bounds.minX) bounds.minX = i.x
-    if (i.y < bounds.minY) bounds.minY = i.y
-    if (i.x > bounds.maxX) bounds.maxX = i.x
-    if (i.y > bounds.maxY) bounds.maxY = i.y
+    const b = boundsFor(i.layer)
+    if (i.x < b.minX) b.minX = i.x
+    if (i.y < b.minY) b.minY = i.y
+    if (i.x > b.maxX) b.maxX = i.x
+    if (i.y > b.maxY) b.maxY = i.y
   }
 
   const paths = []
-  for (const { layer, color, filled, commands } of buckets.values()) {
-    if (commands.length) paths.push({ layer, color, filled, d: commands.join('') })
+  for (const { layer, color, filled, sourceBlock, commands } of buckets.values()) {
+    if (commands.length) paths.push({ layer, color, filled, sourceBlock, d: commands.join('') })
   }
   // Fills first so line work stays legible on top of them.
   paths.sort((a, b) => Number(b.filled) - Number(a.filled))
@@ -249,9 +279,28 @@ export function buildPlan(dxf, meta = {}) {
     a.localeCompare(b, undefined, { numeric: true }),
   )
 
+  // The whole-plan box, for callers that just want to fit everything — the
+  // union of every layer's own bounds.
+  const bounds = emptyBounds()
+  for (const b of layerBoundsMap.values()) {
+    if (b.minX < bounds.minX) bounds.minX = b.minX
+    if (b.minY < bounds.minY) bounds.minY = b.minY
+    if (b.maxX > bounds.maxX) bounds.maxX = b.maxX
+    if (b.maxY > bounds.maxY) bounds.maxY = b.maxY
+  }
+
+  // Plain, JSON-safe per-layer bounds for the viewport to refit against when
+  // layer visibility changes. Layers that ended up with no supported geometry
+  // at all are left out rather than exported with Infinity min/max.
+  const layerBounds = {}
+  for (const [layer, b] of layerBoundsMap) {
+    if (!isEmptyBounds(b)) layerBounds[layer] = { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY }
+  }
+
   return {
     fileName: meta.fileName ?? 'plan.dxf',
     bounds,
+    layerBounds,
     layers: layerNames.map((name) => ({
       name,
       color: colors.get(name) ?? DEFAULT_COLOR,
