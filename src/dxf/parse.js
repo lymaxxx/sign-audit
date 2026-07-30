@@ -71,25 +71,39 @@ export function explainParseFailure(error, audit) {
  * @throws {Error} with a human-readable message
  */
 /**
- * Close off a file that stops part-way through.
+ * Close off a file that stops part-way through, dropping the last `pairs`
+ * code/value pairs first.
  *
  * The scanner throws the moment it runs out of groups while still looking for
  * a section end, which loses everything that was read up to that point. A
  * drawing that was cut short in transfer is still mostly intact, and mostly
  * intact is far more useful to someone on site than an error message, so the
  * closing markers are supplied and the parse retried.
+ *
+ * A cut can land after a *complete* code/value pair and still leave the file
+ * unparsable: a point is written as two or three separate pairs (10/20[/30]
+ * for x/y[/z]), and a cut between the x and y pair is a clean, even number of
+ * lines with nothing dangling, yet the entity is still half-written. Dropping
+ * pairs one at a time and retrying (see `parseDxf`) covers that without
+ * having to duplicate the library's own per-entity grammar here.
  */
-function closeTruncated(text) {
+function closeTruncated(text, pairs = 0) {
   const lines = text.replace(/\s+$/, '').split(/\r\n|\r|\n/)
   // A DXF is a stream of code/value line pairs. A file cut mid-pair leaves a
   // dangling code, which offsets every pair after it — so drop it before
   // appending anything, or the repair is worse than the damage.
   if (lines.length % 2 !== 0) lines.pop()
+  if (pairs > 0) lines.splice(-pairs * 2, pairs * 2)
   // Close whatever might still be open. The parser skips terminators it is not
   // looking for, so an unnecessary one is harmless; a missing one is fatal.
   lines.push('  0', 'ENDBLK', '  0', 'ENDSEC', '  0', 'EOF')
   return `${lines.join('\n')}\n`
 }
+
+// How many trailing pairs to try dropping before giving up on a truncated
+// file. A split point value is at most three pairs (x/y/z); this leaves
+// headroom without turning a genuinely unrecoverable file into a long retry.
+const MAX_TRUNCATION_RETRY_PAIRS = 6
 
 export function parseDxf(text, audit = null) {
   const parse = (source) => {
@@ -103,12 +117,17 @@ export function parseDxf(text, audit = null) {
     dxf = parse(text)
   } catch (error) {
     if (/Unexpected end of input|after EOF group/.test(String(error?.message))) {
-      try {
-        dxf = parse(closeTruncated(text))
-        if (dxf) dxf.recovered = 'truncated'
-      } catch {
-        throw new Error(explainParseFailure(error, audit), { cause: error })
+      for (let pairs = 0; pairs <= MAX_TRUNCATION_RETRY_PAIRS; pairs++) {
+        try {
+          dxf = parse(closeTruncated(text, pairs))
+          dxf.recovered = 'truncated'
+          break
+        } catch {
+          // Try dropping one more trailing pair — the cut may have landed
+          // between the pairs of a single split point value.
+        }
       }
+      if (!dxf) throw new Error(explainParseFailure(error, audit), { cause: error })
     } else {
       throw new Error(explainParseFailure(error, audit), { cause: error })
     }

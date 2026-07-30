@@ -39,7 +39,21 @@ function migrateProject(project) {
     changed = true
   }
 
-  return changed ? { ...project, signs, hiddenBlocks: project.hiddenBlocks ?? [] } : project
+  // Same reasoning for backdrop layers: nothing was ever marked as passive
+  // background before this existed, so an empty list is the correct default,
+  // not a guess.
+  if (!Array.isArray(project.backdropLayers)) {
+    changed = true
+  }
+
+  return changed
+    ? {
+        ...project,
+        signs,
+        hiddenBlocks: project.hiddenBlocks ?? [],
+        backdropLayers: project.backdropLayers ?? [],
+      }
+    : project
 }
 
 const AUTOSAVE_DELAY = 400
@@ -134,6 +148,19 @@ function reducer(state, action) {
         },
       }
 
+    case 'setBackdropLayer':
+      if (!state.project) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          backdropLayers: action.on
+            ? [...new Set([...state.project.backdropLayers, action.name])]
+            : state.project.backdropLayers.filter((name) => name !== action.name),
+          updatedAt: Date.now(),
+        },
+      }
+
     default:
       return state
   }
@@ -191,7 +218,7 @@ export function StoreProvider({ children }) {
       dismissError: () => dispatch({ type: 'error', error: null }),
 
       /** Commit a freshly parsed drawing as a new project. */
-      async createProject({ name, plan, planFile, signs, hiddenBlocks }) {
+      async createProject({ name, plan, planFile, signs, hiddenBlocks, backdropLayers }) {
         dispatch({ type: 'busy', busy: 'Saving project…' })
         try {
           const id = newId('prj')
@@ -209,6 +236,9 @@ export function StoreProvider({ children }) {
             // "only used for sign naming" holds for its whole life, not just
             // while setting it up.
             hiddenBlocks: hiddenBlocks ?? [],
+            // Layers marked passive background (an XREF'd wall shell, say) —
+            // drawn dimmed and without labels rather than as foreground content.
+            backdropLayers: backdropLayers ?? [],
             signs,
           }
           const planRecord = {
@@ -270,6 +300,7 @@ export function StoreProvider({ children }) {
       renameProject: (name) => dispatch({ type: 'project', patch: { name } }),
       setShowLabels: (showLabels) => dispatch({ type: 'project', patch: { showLabels } }),
       setLayerVisible: (name, visible) => dispatch({ type: 'setLayerVisible', name, visible }),
+      setBackdropLayer: (name, on) => dispatch({ type: 'setBackdropLayer', name, on }),
 
       updateSign: (id, patch) => dispatch({ type: 'updateSign', id, patch }),
 

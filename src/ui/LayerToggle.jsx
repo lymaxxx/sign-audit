@@ -1,6 +1,15 @@
 /** Show/hide individual CAD line layers, plus the drawing's own text. */
-export default function LayerToggle({ layers, showLabels, onSetLayer, onSetShowLabels, onClose }) {
+export default function LayerToggle({
+  layers,
+  showLabels,
+  onSetLayer,
+  onSetShowLabels,
+  backdropLayers,
+  onSetBackdrop,
+  onClose,
+}) {
   const allOn = layers.every((l) => l.visible)
+  const backdrop = new Set(backdropLayers ?? [])
 
   return (
     <div className="sheet" role="dialog" aria-label="Layers">
@@ -44,6 +53,30 @@ export default function LayerToggle({ layers, showLabels, onSetLayer, onSetShowL
             </li>
           ))}
         </ul>
+
+        {onSetBackdrop && (
+          <>
+            <h3 className="sheet__subhead">Backdrop</h3>
+            <p className="muted small">
+              Mark a layer as passive background — drawn dim, without its text, behind everything
+              else. Good for an XREF'd wall shell you want for context but not as foreground detail.
+            </p>
+            <ul className="layers">
+              {layers.map((layer) => (
+                <li key={layer.name}>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={backdrop.has(layer.name)}
+                      onChange={(event) => onSetBackdrop(layer.name, event.target.checked)}
+                    />
+                    <span className="layers__name">{layer.name}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </div>
     </div>
   )

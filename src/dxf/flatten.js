@@ -16,6 +16,7 @@ import {
   multiply,
   textPlacement,
 } from './geometry.js'
+import { isLeaderShape } from './link.js'
 
 const MAX_BLOCK_DEPTH = 8
 // Plans carry a lot of incidental text (dimensions, notes). Past this many
@@ -239,7 +240,15 @@ export function buildPlan(dxf, meta = {}) {
       }
 
       const filled = entity.type === 'HATCH' && entity.solid === true
-      const out = bucketFor(layer, color, filled, sourceBlock)
+      // A model-space leader dog-leg gets its own bucket key, keyed by handle,
+      // so its geometry can be individually hidden once sign detection knows
+      // which leaders actually connect a marker to a tag (see link.js's
+      // `networkLeaderHandles` and the `hiddenBlocks` mechanism it feeds).
+      const leaderKey =
+        !sourceBlock && !filled && entity.handle && isLeaderShape(entity)
+          ? `leader:${entity.handle}`
+          : null
+      const out = bucketFor(layer, color, filled, sourceBlock ?? leaderKey)
       if (emitEntity(entity, matrix, out, boundsFor(layer))) {
         usedLayers.add(layer)
         rendered.set(entity.type, (rendered.get(entity.type) ?? 0) + 1)

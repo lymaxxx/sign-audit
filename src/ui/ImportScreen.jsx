@@ -31,6 +31,7 @@ export default function ImportScreen() {
   const [name, setName] = useState('')
   const [existing, setExisting] = useState(null)
   const [hidden, setHidden] = useState(() => new Set())
+  const [backdrop, setBackdrop] = useState(() => new Set())
 
   useEffect(() => {
     db.listProjects()
@@ -57,6 +58,11 @@ export default function ImportScreen() {
       setDraft({ plan, dxf, file, analysis, ledger })
       setRecipe(suggestRecipe(analysis))
       setHidden(new Set())
+      // An XREF is background context by convention — the walls of the
+      // building the signs live in, not something to audit — so a layer named
+      // for one is worth defaulting to backdrop rather than making every
+      // import re-discover the same toggle.
+      setBackdrop(new Set(plan.layers.filter((l) => /xref/i.test(l.name)).map((l) => l.name)))
       setName(file.name.replace(/\.dxf$/i, ''))
     } catch (cause) {
       alert(cause.message ?? String(cause))
@@ -83,8 +89,11 @@ export default function ImportScreen() {
         set.add(insert.blockName)
       }
     }
+    // Leaders that connect a marker to one of those now-hidden tags would
+    // otherwise dangle on the plan, pointing at nothing.
+    for (const handle of preview.leaderHandles ?? []) set.add(`leader:${handle}`)
     return set
-  }, [draft, recipe])
+  }, [draft, recipe, preview.leaderHandles])
 
   // The preview reuses the real plan renderer, so what you approve here is
   // literally what the audit screen will draw.
@@ -140,6 +149,7 @@ export default function ImportScreen() {
       // either — "only used for sign naming" holds for the whole life of the
       // project, not just while setting it up.
       hiddenBlocks: [...hiddenBlocks],
+      backdropLayers: [...backdrop],
     })
   }
 
@@ -175,6 +185,7 @@ export default function ImportScreen() {
               onAddAt={() => {}}
               viewport={viewport}
               hiddenBlocks={hiddenBlocks}
+              backdropLayers={backdrop}
             />
             <div className="plan__tools">
               <button
@@ -243,18 +254,39 @@ export default function ImportScreen() {
             {analysis.attributeTags.length > 0 && (
               <section className="card__section">
                 <h2>Sign name comes from</h2>
+                <p className="muted small">
+                  Pick one or more, in the order they should join — e.g. sign code then sequence
+                  number gives names like <code>D101.2_606</code>.
+                </p>
                 <div className="chips">
-                  {analysis.attributeTags.map((tag) => (
-                    <button
-                      key={tag.tag}
-                      type="button"
-                      className={recipe.nameTag === tag.tag ? 'chip is-on' : 'chip'}
-                      onClick={() => setRecipe((c) => ({ ...c, nameTag: tag.tag }))}
-                    >
-                      {tag.tag}
-                      <span className="chip__count">{tag.distinct}</span>
-                    </button>
-                  ))}
+                  {analysis.attributeTags.map((tag) => {
+                    const position = recipe.nameTags.indexOf(tag.tag)
+                    return (
+                      <button
+                        key={tag.tag}
+                        type="button"
+                        className={position >= 0 ? 'chip is-on' : 'chip'}
+                        onClick={() =>
+                          setRecipe((c) => {
+                            if (c.nameTags.includes(tag.tag)) {
+                              // Always leave at least one attribute selected —
+                              // an empty name source is a broken state, not a
+                              // valid preference.
+                              if (c.nameTags.length === 1) return c
+                              return { ...c, nameTags: c.nameTags.filter((t) => t !== tag.tag) }
+                            }
+                            return { ...c, nameTags: [...c.nameTags, tag.tag] }
+                          })
+                        }
+                      >
+                        {position >= 0 && recipe.nameTags.length > 1 && (
+                          <span className="chip__order">{position + 1}</span>
+                        )}
+                        {tag.tag}
+                        <span className="chip__count">{tag.distinct}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </section>
             )}
@@ -263,8 +295,9 @@ export default function ImportScreen() {
               <section className="card__section">
                 <h2>Signs drawn without a block</h2>
                 <p className="muted small">
-                  Circles marked with a centre point. Their position is used; how many faces they
-                  have is set per sign afterwards.
+                  Circles or rectangles marked with a centre point — separate lines and letters,
+                  not a block. Their position is used; how many faces they have and which way each
+                  one points is set per sign afterwards.
                 </p>
                 <ul className="layers">
                   {analysis.looseLayers.map((entry) => (
@@ -279,7 +312,7 @@ export default function ImportScreen() {
                         />
                         <span className="layers__name">
                           {entry.layer}
-                          <span className="blocks__meta"> {entry.withCentreMark} circles</span>
+                          <span className="blocks__meta"> {entry.withCentreMark} shapes</span>
                         </span>
                       </label>
                     </li>
@@ -300,6 +333,29 @@ export default function ImportScreen() {
                         onChange={() => setHidden((h) => toggleIn(h, layer.name))}
                       />
                       <span className="layers__swatch" style={{ background: layer.color }} />
+                      <span className="layers__name">{layer.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <section className="card__section">
+              <h2>Backdrop layers</h2>
+              <p className="muted small">
+                Passive background context — an XREF'd wall shell, say — drawn dim and without its
+                own text, behind everything else. Separate from visibility above: a layer can be
+                shown but demoted to backdrop, or hidden entirely.
+              </p>
+              <ul className="layers">
+                {plan.layers.map((layer) => (
+                  <li key={layer.name}>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={backdrop.has(layer.name)}
+                        onChange={() => setBackdrop((b) => toggleIn(b, layer.name))}
+                      />
                       <span className="layers__name">{layer.name}</span>
                     </label>
                   </li>

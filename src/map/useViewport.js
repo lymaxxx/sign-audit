@@ -127,20 +127,30 @@ export function useViewport() {
     [rect],
   )
 
+  /** The scale `fitTo` would use for a bounding box, without committing it. */
+  const scaleToFit = useCallback(
+    (bounds, padding = 0.06) => {
+      const box = rect()
+      if (!box?.width || !box?.height) return null
+      if (!bounds || !Number.isFinite(bounds.minX) || !Number.isFinite(bounds.maxX)) return null
+      const w = Math.max(bounds.maxX - bounds.minX, 1e-9)
+      const h = Math.max(bounds.maxY - bounds.minY, 1e-9)
+      return clampScale(Math.min(box.width / w, box.height / h) * (1 - padding * 2))
+    },
+    [rect],
+  )
+
   /** Fit a world-space bounding box into the container with a little padding. */
   const fitTo = useCallback(
     (bounds, padding = 0.06) => {
       const box = rect()
-      if (!box?.width || !box?.height) return
-      if (!bounds || !Number.isFinite(bounds.minX) || !Number.isFinite(bounds.maxX)) return
-      const w = Math.max(bounds.maxX - bounds.minX, 1e-9)
-      const h = Math.max(bounds.maxY - bounds.minY, 1e-9)
-      const scale = clampScale(Math.min(box.width / w, box.height / h) * (1 - padding * 2))
+      const scale = scaleToFit(bounds, padding)
+      if (!box || scale == null) return
       const cx = (bounds.minX + bounds.maxX) / 2
       const cy = (bounds.minY + bounds.maxY) / 2
       setViewNow({ scale, tx: box.width / 2 - scale * cx, ty: box.height / 2 + scale * cy })
     },
-    [setViewNow, rect],
+    [setViewNow, rect, scaleToFit],
   )
 
   /**
@@ -187,28 +197,71 @@ export function useViewport() {
     [rect, zoomAt],
   )
 
+  // Re-derive the gesture whenever the number of touching fingers changes, so
+  // lifting one finger out of a pinch continues as a clean pan. Also used by
+  // the stuck-pointer recovery effect below, so it is not local to `handlers`.
+  const resetGesture = useCallback(() => {
+    const points = [...pointers.current.values()]
+    if (points.length === 1) {
+      gesture.current = { kind: 'pan', last: { x: points[0].x, y: points[0].y } }
+    } else if (points.length >= 2) {
+      const [a, b] = points
+      gesture.current = {
+        kind: 'pinch',
+        distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      }
+    } else {
+      gesture.current = null
+    }
+  }, [])
+
+  /**
+   * A finger lifted while a native dialog (`prompt`/`confirm`) or an app
+   * switch was in front of the page can miss its `pointerup`/`pointercancel`
+   * entirely — iOS Safari does not reliably deliver them once the page loses
+   * the event. Left behind, that phantom pointer makes the very next
+   * one-finger drag look like a two-finger pinch: distance between the real
+   * finger and the frozen phantom changes with every move, so a plain vertical
+   * drag reads as a continuous zoom instead of a pan. Clearing tracked
+   * pointers whenever the page is hidden or loses focus closes that window.
+   */
+  useEffect(() => {
+    const clearStale = () => {
+      if (!pointers.current.size) return
+      pointers.current.clear()
+      resetGesture()
+    }
+    const onVisibility = () => {
+      if (document.hidden) clearStale()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('blur', clearStale)
+
+    // Belt and braces: if a pointer's `up`/`cancel` ever lands on some other
+    // element (capture is only taken once a drag is confirmed, see
+    // `onPointerMove` below), catch it here in the capture phase so the
+    // pointer is not left tracked forever.
+    const onGlobalRelease = (event) => {
+      if (!pointers.current.has(event.pointerId)) return
+      pointers.current.delete(event.pointerId)
+      resetGesture()
+    }
+    window.addEventListener('pointerup', onGlobalRelease, true)
+    window.addEventListener('pointercancel', onGlobalRelease, true)
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('blur', clearStale)
+      window.removeEventListener('pointerup', onGlobalRelease, true)
+      window.removeEventListener('pointercancel', onGlobalRelease, true)
+    }
+  }, [resetGesture])
+
   const handlers = useMemo(() => {
     const localPoint = (event) => {
       const box = containerRef.current.getBoundingClientRect()
       return { x: event.clientX - box.left, y: event.clientY - box.top }
-    }
-
-    // Re-derive the gesture whenever the number of touching fingers changes,
-    // so lifting one finger out of a pinch continues as a clean pan.
-    const resetGesture = () => {
-      const points = [...pointers.current.values()]
-      if (points.length === 1) {
-        gesture.current = { kind: 'pan', last: { x: points[0].x, y: points[0].y } }
-      } else if (points.length >= 2) {
-        const [a, b] = points
-        gesture.current = {
-          kind: 'pinch',
-          distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
-          center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-        }
-      } else {
-        gesture.current = null
-      }
     }
 
     return {
@@ -289,7 +342,7 @@ export function useViewport() {
         zoomAt(Math.exp(-event.deltaY * intensity), point.x, point.y)
       },
     }
-  }, [applyView, zoomAt])
+  }, [applyView, zoomAt, resetGesture])
 
   /**
    * True when the pointer moved far enough to count as a drag. Click handlers
@@ -307,6 +360,7 @@ export function useViewport() {
     handlers,
     toWorld,
     fitTo,
+    scaleToFit,
     centerOn,
     zoomBy,
     wasDrag,

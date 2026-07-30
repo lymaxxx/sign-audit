@@ -359,6 +359,47 @@ section('ENTITIES', () => {
 
   g(0, 'SEQEND')
   g(8, 'TEXT')
+
+  // A loose rectangular sign marker: separate lines and letters, not a block —
+  // the same convention as the circle above, exercised for the quad-shape case.
+  lwpolyline('_REGULATORY_SIGN', [
+    [19.6, 18.6],
+    [20.4, 18.6],
+    [20.4, 19.4],
+    [19.6, 19.4],
+  ], true)
+  g(0, 'POINT')
+  g(8, '_REGULATORY_SIGN')
+  g(10, 20)
+  g(20, 19)
+  g(30, 0)
+
+  lwpolyline('TEXT', [
+    [20.4, 19],
+    [22, 19],
+    [23, 19],
+  ], false)
+
+  g(0, 'INSERT')
+  g(8, 'TEXT')
+  g(2, 'TAG_HEAD')
+  g(10, 23)
+  g(20, 19)
+  g(30, 0)
+  g(50, 0)
+
+  g(0, 'ATTRIB')
+  g(8, 'TEXT')
+  g(10, 23)
+  g(20, 19.3)
+  g(30, 0)
+  g(40, 0.25)
+  g(1, 'LOOSE_02')
+  g(2, 'NAME')
+  g(70, 0)
+
+  g(0, 'SEQEND')
+  g(8, 'TEXT')
 })
 
 g(0, 'EOF')

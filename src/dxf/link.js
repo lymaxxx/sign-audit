@@ -116,6 +116,26 @@ export function findLeaders(entities) {
 
 const LEADER_TYPES = new Set(['LWPOLYLINE', 'LINE', 'POLYLINE', 'LEADER', 'MULTILEADER'])
 
+// Narrower than `LEADER_TYPES` above: used to decide, at bake time, whether an
+// entity is worth giving its own hideable bucket (see `flatten.js`). Plain
+// LINE is excluded and the chain is capped at a handful of vertices, because
+// unlike the pairing search above — which only ever runs over a drawing's
+// already-small candidate lists — this predicate is evaluated against every
+// entity in the file. Ordinary model-space drafting (walls, site lines) is
+// built from exactly the entities this excludes, so the set of matches stays
+// small regardless of drawing size; a leader dog-leg is reliably a short,
+// open LWPOLYLINE (see the module doc above) and stays matched.
+const LEADER_SHAPE_TYPES = new Set(['LWPOLYLINE', 'POLYLINE', 'LEADER', 'MULTILEADER'])
+const MAX_LEADER_SHAPE_VERTICES = 4
+
+export function isLeaderShape(entity) {
+  if (!LEADER_SHAPE_TYPES.has(entity.type)) return false
+  const pts = entity.vertices
+  if (!pts || pts.length < 2 || pts.length > MAX_LEADER_SHAPE_VERTICES) return false
+  if (entity.shape) return false
+  return Number.isFinite(pts[0]?.x) && Number.isFinite(pts[pts.length - 1]?.x)
+}
+
 /**
  * Pair each marker with the callout its leader reaches.
  *
@@ -150,6 +170,33 @@ export function pairByLeader(markers, tags, leaders) {
   }
 
   return pairs
+}
+
+/**
+ * Which leader entities actually connect a selected marker to a selected tag —
+ * the ones whose line should disappear along with the tag's rectangle, so a
+ * dangling stub is not left pointing at nothing once the tag is hidden.
+ *
+ * Deliberately not the same pass as `pairByLeader`: every leader touching both
+ * a marker and a tag counts here, not just the first one claimed per marker,
+ * because this drives what to hide from the drawing, not what to name a sign.
+ */
+export function networkLeaderHandles(markers, tags, leaders) {
+  const handles = new Set()
+  for (const leader of leaders) {
+    if (!leader.entity?.handle) continue
+    const [a, b] = leader.ends
+    const touchesMarker = markers.some(
+      (m) => boxDistance(m.box, a) <= TOUCH_SLOP || boxDistance(m.box, b) <= TOUCH_SLOP,
+    )
+    if (!touchesMarker) continue
+    const touchesTag = tags.some(
+      (t) => boxDistance(t.box, a) <= TOUCH_SLOP || boxDistance(t.box, b) <= TOUCH_SLOP,
+    )
+    if (!touchesTag) continue
+    handles.add(leader.entity.handle)
+  }
+  return handles
 }
 
 /**

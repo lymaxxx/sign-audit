@@ -13,7 +13,7 @@
  */
 
 import { newId } from '../util/id.js'
-import { findLeaders, instanceBounds, nearestTag, pairByLeader } from './link.js'
+import { findLeaders, instanceBounds, nearestTag, networkLeaderHandles, pairByLeader } from './link.js'
 import { findLooseMarkers, looseMarkerLayers } from './looseMarkers.js'
 
 /**
@@ -187,15 +187,15 @@ export function analyseDrawing(dxf, plan) {
  * rotated.
  */
 export function suggestRecipe(analysis) {
-  // Sign code first: it is the identifier the signage package is actually
-  // organised by. It is legitimately non-unique — two different physical
-  // signs of the same type share a code — which the sequential number never
-  // is, but uniqueness is not what makes a name useful here.
-  const nameTag =
-    analysis.attributeTags.find((t) => /^(SC|SIGN.?CODE)$/i.test(t.tag))?.tag ??
-    analysis.attributeTags.find((t) => /^(SG#|SGN|SEQ)/i.test(t.tag))?.tag ??
-    analysis.attributeTags[0]?.tag ??
-    null
+  // A sign's name is built from the sign code — the identifier the signage
+  // package is actually organised by — and the sequential number, joined so
+  // the name stays unique even though the code alone is not: two different
+  // physical signs of the same type legitimately share a code, and the
+  // sequential number is what tells them apart in that case.
+  const sc = analysis.attributeTags.find((t) => /^(SC|SIGN.?CODE)$/i.test(t.tag))?.tag
+  const seq = analysis.attributeTags.find((t) => /^(SG#|SGN|SEQ)/i.test(t.tag))?.tag
+  const nameTags = [sc, seq].filter(Boolean)
+  if (!nameTags.length && analysis.attributeTags[0]) nameTags.push(analysis.attributeTags[0].tag)
 
   const markerBlocks = new Set()
   const tagBlocks = new Set()
@@ -211,7 +211,7 @@ export function suggestRecipe(analysis) {
       tagBlocks.add(block.name)
       // Not every drawing separates the two. Where one block carries both the
       // position and the attributes, it is its own callout and needs no leader.
-      if (looksPlaced && block.tags.includes(nameTag)) markerBlocks.add(block.name)
+      if (looksPlaced && nameTags.some((t) => block.tags.includes(t))) markerBlocks.add(block.name)
       continue
     }
     if (looksPlaced) markerBlocks.add(block.name)
@@ -221,7 +221,7 @@ export function suggestRecipe(analysis) {
     analysis.looseLayers.filter((l) => l.withCentreMark > 0).map((l) => l.layer),
   )
 
-  return { markerBlocks, tagBlocks, looseLayers, nameTag, linkBy: 'leader' }
+  return { markerBlocks, tagBlocks, looseLayers, nameTags, linkBy: 'leader' }
 }
 
 /* ---------------------------------------------------------------- sides */
@@ -256,27 +256,31 @@ export function evenlySpace(sides) {
 
 /* ---------------------------------------------------------------- signs */
 
-function tagView(insert, nameTag) {
+function tagView(insert, nameTags) {
   return {
     id: insert.handle ?? `${insert.blockName}@${insert.x},${insert.y}`,
     box: insert.box,
     layer: insert.layer,
-    hasName: Boolean(insert.attribs?.[nameTag]),
+    hasName: nameTags.some((t) => insert.attribs?.[t]),
     insert,
   }
 }
 
-/** A loose circle marker's box, so it can go through the same leader pairing
- * as a block marker: a box centred on the circle, sized to its radius. */
+/** Join whichever of the recipe's name attributes are actually present. */
+function composeName(attribs, nameTags) {
+  return nameTags
+    .map((t) => (attribs?.[t] ?? '').trim())
+    .filter(Boolean)
+    .join('_')
+}
+
+/** A loose (non-block) marker's box, so it can go through the same leader
+ * pairing as a block marker — `findLooseMarkers` already provides one, sized
+ * to whichever shape (circle or rectangle) it detected. */
 function looseMarkerView(marker, index) {
   return {
     id: `loose${index}`,
-    box: {
-      minX: marker.x - marker.radius,
-      minY: marker.y - marker.radius,
-      maxX: marker.x + marker.radius,
-      maxY: marker.y + marker.radius,
-    },
+    box: marker.box,
     layer: marker.layer,
     marker,
   }
@@ -287,7 +291,7 @@ function looseMarkerView(marker, index) {
  * @returns {{signs: object[], links: Array<{from: object, to: object}>, unlinked: number}}
  */
 export function buildSigns(analysis, recipe) {
-  const nameTag = recipe.nameTag
+  const nameTags = recipe.nameTags
   const markers = analysis.markerCandidates.filter(
     (insert) =>
       recipe.markerBlocks.has(insert.effectiveName) &&
@@ -311,7 +315,7 @@ export function buildSigns(analysis, recipe) {
   )
   const markerViews = [...blockViews, ...looseViews]
 
-  const tagViews = tags.map((insert) => tagView(insert, nameTag))
+  const tagViews = tags.map((insert) => tagView(insert, nameTags))
   const tagById = new Map(tagViews.map((t) => [t.id, t]))
 
   const paired =
@@ -325,7 +329,7 @@ export function buildSigns(analysis, recipe) {
 
   for (const view of markerViews) {
     // A self-describing block marker carries its own data and needs no leader.
-    const ownName = view.insert?.attribs?.[nameTag]
+    const ownName = nameTags.some((t) => view.insert?.attribs?.[t])
     let tag = ownName ? view : (tagById.get(paired.get(view.id)) ?? null)
 
     if (!tag && recipe.linkBy !== 'leader') {
@@ -334,7 +338,7 @@ export function buildSigns(analysis, recipe) {
     }
 
     const attribs = tag?.insert?.attribs ?? {}
-    const name = (attribs[nameTag] ?? '').trim()
+    const name = composeName(attribs, nameTags)
     if (!tag) unlinked++
     if (tag && view.insert) links.push({ from: view.insert, to: tag.insert })
 
@@ -382,5 +386,11 @@ export function buildSigns(analysis, recipe) {
     })
   }
 
-  return { signs, links, unlinked }
+  // Leaders that actually join a marker to a tag are drawn purely to explain
+  // the pairing on the original CAD sheet; once the tag's rectangle is hidden
+  // (see the module doc), the line itself is a dangling stub pointing at
+  // nothing and should go with it.
+  const leaderHandles = networkLeaderHandles(markerViews, tagViews, analysis.leaders)
+
+  return { signs, links, unlinked, leaderHandles }
 }

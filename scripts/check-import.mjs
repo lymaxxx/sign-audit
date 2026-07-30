@@ -36,7 +36,7 @@ const elapsed = Date.now() - started
 const ledger = reconcile(census, plan.stats.rendered, plan.stats.skipped)
 const analysis = analyseDrawing(dxf, plan)
 const recipe = suggestRecipe(analysis)
-const { signs, links, unlinked } = buildSigns(analysis, recipe)
+const { signs, links, unlinked, leaderHandles } = buildSigns(analysis, recipe)
 
 console.log(`\n${target}`)
 console.log(`  parsed in            ${elapsed} ms`)
@@ -74,10 +74,11 @@ for (const block of analysis.blocks) {
 }
 
 console.log(
-  `\n  loose-marker layers  ${analysis.looseLayers.map((l) => `${l.layer}(${l.withCentreMark}/${l.circles})`).join(', ') || 'none'}`,
+  `\n  loose-marker layers  ${analysis.looseLayers.map((l) => `${l.layer}(${l.withCentreMark}/${l.shapes})`).join(', ') || 'none'}`,
 )
 console.log(`  leaders found        ${analysis.leaders.length}`)
-console.log(`  name attribute       ${recipe.nameTag ?? '(none)'}`)
+console.log(`  leaders hidden       ${leaderHandles.size} (join a marker to a now-hidden tag)`)
+console.log(`  name attributes      ${recipe.nameTags.join(' + ') || '(none)'}`)
 console.log(
   `  signs detected       ${signs.length}  (${links.length} linked, ${unlinked} without a callout)`,
 )
@@ -111,13 +112,29 @@ check(
   ),
   JSON.stringify(byType),
 )
-// Ten named block markers + SIGN_ASSEMBLY (self-describing, unlinked) + the
-// loose circle marker linked through its leader to TAG_HEAD.
-check('twelve signs, no nested double-count', signs.length === 12, `got ${signs.length}`)
+// Ten named block markers + SIGN_ASSEMBLY (self-describing, unlinked) + a
+// loose circle marker and a loose rectangle marker, each linked through its
+// leader to its own TAG_HEAD.
+check('thirteen signs, no nested double-count', signs.length === 13, `got ${signs.length}`)
+const loose = signs.filter((s) => s.source === 'loose')
 check(
   'loose circle marker linked through its leader',
-  signs.find((s) => s.source === 'loose')?.name === 'LOOSE_01',
-  JSON.stringify(signs.find((s) => s.source === 'loose')),
+  loose.some((s) => s.name === 'LOOSE_01'),
+  JSON.stringify(loose),
+)
+check(
+  'loose rectangle marker linked through its leader',
+  loose.some((s) => s.name === 'LOOSE_02'),
+  JSON.stringify(loose),
+)
+check(
+  'leaders that link a marker to a tag are marked for hiding',
+  leaderHandles.size >= 2,
+  `got ${leaderHandles.size}`,
+)
+check(
+  'at least one leader entity got its own hideable bucket at bake time',
+  plan.paths.some((p) => p.sourceBlock?.startsWith('leader:')),
 )
 check(
   'every named sign starts unchecked',
