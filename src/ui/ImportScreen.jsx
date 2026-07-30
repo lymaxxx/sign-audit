@@ -1,41 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { buildPlan } from '../dxf/flatten.js'
 import { looksLikeDxf, parseDxf } from '../dxf/parse.js'
-import {
-  analyseInserts,
-  bestStrategy,
-  candidateStrategies,
-  makeSigns,
-  nameFor,
-  selectedInserts,
-  strategyKey,
-  strategyLabel,
-  suggestSelection,
-} from '../dxf/detectSigns.js'
+import { auditDxf, describeLosses, reconcile } from '../dxf/audit.js'
+import { analyseDrawing, buildSigns, suggestRecipe } from '../dxf/detectSigns.js'
 import { useStore } from '../state/storeContext.js'
 import OfflineNotice from './OfflineNotice.jsx'
+import PlanView from '../map/PlanView.jsx'
+import { useViewport } from '../map/useViewport.js'
 import * as db from '../state/db.js'
 
 /**
- * Import a drawing and confirm which block references are signs.
+ * Import a drawing and confirm what on it is a sign.
  *
- * There is no universal CAD convention for how a sign carries its name, so the
- * app scores the possibilities, preselects its best guess, and then shows the
- * names it would produce. Confirming a guess takes one glance; correcting it
- * takes two taps. Guessing silently and being wrong would poison the whole
- * audit.
+ * No two signage packages are drawn the same way, so the app proposes a recipe
+ * — which blocks are sign symbols, which are data callouts, which attribute is
+ * the name — and then *shows the result on the plan* rather than asking anyone
+ * to take it on trust. Everything re-runs on each change, so a wrong guess is
+ * visible immediately instead of surfacing halfway through a site visit.
  */
 export default function ImportScreen() {
   const { actions, busy, error } = useStore()
   const dxfInput = useRef(null)
   const projectInput = useRef(null)
+  const viewport = useViewport()
 
   const [parsing, setParsing] = useState(false)
-  const [draft, setDraft] = useState(null) // { plan, file, analysis }
-  const [selected, setSelected] = useState(() => new Set())
-  const [strategy, setStrategy] = useState(null)
+  const [draft, setDraft] = useState(null) // { plan, dxf, file, analysis, ledger }
+  const [recipe, setRecipe] = useState(null)
   const [name, setName] = useState('')
   const [existing, setExisting] = useState(null)
+  const [hidden, setHidden] = useState(() => new Set())
 
   useEffect(() => {
     db.listProjects()
@@ -53,14 +47,15 @@ export default function ImportScreen() {
           'That does not look like an ASCII DXF file. If you have a DWG, export it as DXF from your CAD application first.',
         )
       }
-      const plan = buildPlan(parseDxf(text), { fileName: file.name })
-      const analysis = analyseInserts(plan.inserts)
-      const preselect = new Set(suggestSelection(analysis))
-      const chosen = selectedInserts(plan.inserts, preselect)
+      const census = auditDxf(text)
+      const dxf = parseDxf(text, census)
+      const plan = buildPlan(dxf, { fileName: file.name })
+      const analysis = analyseDrawing(dxf, plan)
+      const ledger = reconcile(census, plan.stats.rendered, plan.stats.skipped)
 
-      setDraft({ plan, file, analysis })
-      setSelected(preselect)
-      setStrategy(bestStrategy(chosen))
+      setDraft({ plan, dxf, file, analysis, ledger })
+      setRecipe(suggestRecipe(analysis))
+      setHidden(new Set())
       setName(file.name.replace(/\.dxf$/i, ''))
     } catch (cause) {
       alert(cause.message ?? String(cause))
@@ -69,134 +64,214 @@ export default function ImportScreen() {
     }
   }
 
-  const chosenInserts = useMemo(
-    () => (draft ? selectedInserts(draft.plan.inserts, selected) : []),
-    [draft, selected],
-  )
-
-  const strategies = useMemo(() => candidateStrategies(chosenInserts), [chosenInserts])
-
   const preview = useMemo(() => {
-    if (!strategy) return []
-    return chosenInserts.slice(0, 6).map((insert, index) => ({
-      key: index,
-      name: nameFor(insert, strategy).trim() || '(no name — will be numbered)',
+    if (!draft || !recipe) return { signs: [], links: [], unlinked: 0 }
+    return buildSigns(draft.analysis, recipe)
+  }, [draft, recipe])
+
+  // The preview reuses the real plan renderer, so what you approve here is
+  // literally what the audit screen will draw.
+  const previewProject = useMemo(() => {
+    if (!draft) return null
+    return {
+      id: 'preview',
+      bounds: draft.plan.bounds,
+      showLabels: true,
+      layers: draft.plan.layers.map((l) => ({ ...l, visible: !hidden.has(l.name) })),
+    }
+  }, [draft, hidden])
+
+  const toggleIn = (set, value) => {
+    const next = new Set(set)
+    if (next.has(value)) next.delete(value)
+    else next.add(value)
+    return next
+  }
+
+  const setRole = (blockName, role) =>
+    setRecipe((current) => ({
+      ...current,
+      markerBlocks:
+        role === 'marker'
+          ? toggleIn(current.markerBlocks, blockName)
+          : new Set([...current.markerBlocks].filter((n) => n !== blockName)),
+      tagBlocks:
+        role === 'data'
+          ? toggleIn(current.tagBlocks, blockName)
+          : new Set([...current.tagBlocks].filter((n) => n !== blockName)),
     }))
-  }, [chosenInserts, strategy])
 
   const create = () => {
-    const signs = makeSigns(draft.plan.inserts, selected, strategy)
     actions.createProject({
       name: name.trim() || 'Signage audit',
-      plan: draft.plan,
+      plan: { ...draft.plan, layers: previewProject.layers },
       planFile: draft.file,
-      signs,
+      signs: preview.signs,
     })
   }
 
-  if (draft) {
-    const { plan, analysis } = draft
-    const unsupported = Object.entries(plan.stats.unsupported)
+  if (draft && recipe) {
+    const { plan, analysis, ledger } = draft
+    const lost = describeLosses(ledger)
 
     return (
-      <div className="screen screen--import">
-        <div className="card">
-          <header className="card__head">
-            <h1>Which blocks are signs?</h1>
-            <button type="button" className="ghost" onClick={() => setDraft(null)}>
-              Start over
-            </button>
-          </header>
+      <div className="wizard">
+        <header className="wizard__bar">
+          <div>
+            <h1>What on this drawing is a sign?</h1>
+            <p className="muted small">
+              {plan.stats.entities.toLocaleString()} entities · {plan.layers.length} layers ·{' '}
+              {analysis.leaders.length} leader lines
+              {lost && <span className="wizard__lost"> · could not read {lost}</span>}
+            </p>
+          </div>
+          <button type="button" className="ghost" onClick={() => setDraft(null)}>
+            Start over
+          </button>
+        </header>
 
-          <p className="muted">
-            {plan.stats.entities.toLocaleString()} entities · {plan.layers.length} layers ·{' '}
-            {plan.inserts.length.toLocaleString()} block references
-            {unsupported.length > 0 && (
-              <>
-                {' '}
-                · skipped{' '}
-                {unsupported.map(([type, count]) => `${count}× ${type}`).join(', ')}
-              </>
-            )}
-          </p>
-
-          <section className="card__section">
-            <h2>Blocks on the drawing</h2>
-            <ul className="blocks">
-              {analysis.map((block) => (
-                <li key={block.name}>
-                  <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(block.name)}
-                      onChange={(event) => {
-                        const next = new Set(selected)
-                        if (event.target.checked) next.add(block.name)
-                        else next.delete(block.name)
-                        setSelected(next)
-                        setStrategy(bestStrategy(selectedInserts(plan.inserts, next)))
-                      }}
-                    />
-                    <span className="blocks__name">{block.name}</span>
-                    <span className="blocks__count">{block.count}</span>
-                  </label>
-                  {block.tags.length > 0 && (
-                    <p className="blocks__tags">
-                      attributes: {block.tags.map((t) => t.tag).join(', ')}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
+        <div className="wizard__body">
+          <section className="wizard__preview">
+            <PlanView
+              plan={plan}
+              project={previewProject}
+              signs={preview.signs}
+              selectedId={null}
+              onSelectSign={() => {}}
+              addMode={false}
+              onAddAt={() => {}}
+              viewport={viewport}
+            />
+            <p className="plan__note">
+              {preview.signs.length} sign{preview.signs.length === 1 ? '' : 's'} ·{' '}
+              {preview.links.length} matched to a callout
+              {preview.unlinked > 0 && ` · ${preview.unlinked} without one`}
+            </p>
           </section>
 
-          <section className="card__section">
-            <h2>Where the name comes from</h2>
-            <div className="chips">
-              {strategies.map((option) => (
-                <button
-                  key={strategyKey(option)}
-                  type="button"
-                  className={
-                    strategyKey(option) === strategyKey(strategy) ? 'chip is-on' : 'chip'
-                  }
-                  onClick={() => setStrategy(option)}
-                >
-                  {strategyLabel(option)}
-                </button>
-              ))}
-            </div>
+          <aside className="wizard__side">
+            <section className="card__section">
+              <h2>Blocks</h2>
+              <p className="muted small">
+                A <strong>marker</strong> is where the sign physically is. <strong>Data</strong> is
+                the callout holding its number. A block can be both.
+              </p>
+              <ul className="blocks">
+                {analysis.blocks.map((block) => (
+                  <li key={block.name} className="blocks__row">
+                    <div className="blocks__name">
+                      {block.name}
+                      <span className="blocks__count">×{block.count}</span>
+                      {block.variants.length > 0 && (
+                        <span className="blocks__meta"> +{block.variants.length} variants</span>
+                      )}
+                      {block.tags.length > 0 && (
+                        <span className="blocks__meta"> {block.tags.join(', ')}</span>
+                      )}
+                    </div>
+                    <div className="blocks__roles">
+                      <button
+                        type="button"
+                        className={recipe.markerBlocks.has(block.name) ? 'chip is-on' : 'chip'}
+                        onClick={() => setRole(block.name, 'marker')}
+                      >
+                        marker
+                      </button>
+                      <button
+                        type="button"
+                        className={recipe.tagBlocks.has(block.name) ? 'chip is-on' : 'chip'}
+                        onClick={() => setRole(block.name, 'data')}
+                        disabled={!block.tags.length}
+                      >
+                        data
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
 
-            <div className="preview">
-              <h3>
-                {chosenInserts.length.toLocaleString()} sign
-                {chosenInserts.length === 1 ? '' : 's'} — names would be
-              </h3>
-              {preview.length ? (
-                <ul>
-                  {preview.map((item) => (
-                    <li key={item.key}>{item.name}</li>
+            {analysis.attributeTags.length > 0 && (
+              <section className="card__section">
+                <h2>Sign name comes from</h2>
+                <div className="chips">
+                  {analysis.attributeTags.map((tag) => (
+                    <button
+                      key={tag.tag}
+                      type="button"
+                      className={recipe.nameTag === tag.tag ? 'chip is-on' : 'chip'}
+                      onClick={() => setRecipe((c) => ({ ...c, nameTag: tag.tag }))}
+                    >
+                      {tag.tag}
+                      <span className="chip__count">{tag.distinct}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {analysis.looseLayers.length > 0 && (
+              <section className="card__section">
+                <h2>Signs drawn without a block</h2>
+                <p className="muted small">
+                  Circles marked with a centre point. Their position is used; how many faces they
+                  have is set per sign afterwards.
+                </p>
+                <ul className="layers">
+                  {analysis.looseLayers.map((entry) => (
+                    <li key={entry.layer}>
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={recipe.looseLayers.has(entry.layer)}
+                          onChange={() =>
+                            setRecipe((c) => ({ ...c, looseLayers: toggleIn(c.looseLayers, entry.layer) }))
+                          }
+                        />
+                        <span className="layers__name">
+                          {entry.layer}
+                          <span className="blocks__meta"> {entry.withCentreMark} circles</span>
+                        </span>
+                      </label>
+                    </li>
                   ))}
                 </ul>
-              ) : (
-                <p className="muted">Select at least one block above.</p>
-              )}
-            </div>
-          </section>
+              </section>
+            )}
 
-          <label className="field">
-            <span>Project name</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
+            <section className="card__section">
+              <h2>Layers</h2>
+              <ul className="layers">
+                {plan.layers.map((layer) => (
+                  <li key={layer.name}>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={!hidden.has(layer.name)}
+                        onChange={() => setHidden((h) => toggleIn(h, layer.name))}
+                      />
+                      <span className="layers__swatch" style={{ background: layer.color }} />
+                      <span className="layers__name">{layer.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </section>
 
-          <button
-            type="button"
-            className="primary"
-            disabled={!chosenInserts.length || !!busy}
-            onClick={create}
-          >
-            {busy ?? `Create audit with ${chosenInserts.length} signs`}
-          </button>
+            <label className="field">
+              <span>Project name</span>
+              <input value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+
+            <button
+              type="button"
+              className="primary"
+              disabled={!preview.signs.length || !!busy}
+              onClick={create}
+            >
+              {busy ?? `Start audit with ${preview.signs.length} signs`}
+            </button>
+          </aside>
         </div>
       </div>
     )

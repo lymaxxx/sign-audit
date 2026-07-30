@@ -1057,3 +1057,159 @@ textarea {
   font-size: 0.78rem;
   color: var(--ink-dim);
 }
+
+/* ---------------------------------------------------------------- wizard */
+
+/*
+ * Import wizard. The plan preview is the point of this screen — the controls
+ * sit beside it so a change to the recipe is seen, not imagined.
+ */
+.wizard {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.wizard__bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  padding-top: calc(0.75rem + env(safe-area-inset-top));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.wizard__bar h1 {
+  font-size: 1.05rem;
+}
+
+.wizard__lost {
+  color: #ffb340;
+}
+
+.wizard__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.wizard__preview {
+  position: relative;
+  flex: 1;
+  min-height: 40dvh;
+  background: var(--bg);
+}
+
+.wizard__side {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 1rem;
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+@media (min-width: 820px) {
+  .wizard__body {
+    flex-direction: row;
+  }
+
+  .wizard__side {
+    flex: none;
+    width: min(28rem, 42%);
+    border-bottom: none;
+    border-left: 1px solid var(--line);
+    order: 2;
+  }
+}
+
+.blocks__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.blocks__row .blocks__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.blocks__meta {
+  color: var(--ink-dim);
+  font-size: 0.75rem;
+}
+
+.blocks__roles {
+  display: flex;
+  gap: 0.3rem;
+  flex: none;
+}
+
+/* ----------------------------------------------------------------- sides */
+
+.segmented--count {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.sides {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.sides__dial {
+  width: 7rem;
+  height: 7rem;
+  flex: none;
+}
+
+.sides__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sides__list li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.sides__label {
+  width: 3.5rem;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.sides__bearing {
+  flex: 1;
+  min-width: 0;
+}
+
+.sides__unit {
+  color: var(--ink-dim);
+}
+
+.sides__even {
+  align-self: flex-start;
+  padding-left: 0;
+}

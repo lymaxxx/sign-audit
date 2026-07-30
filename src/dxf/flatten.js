@@ -168,6 +168,11 @@ export function buildPlan(dxf, meta = {}) {
           inserts.push({
             blockName: entity.name ?? '',
             handle: entity.handle ?? null,
+            // Composed world transform. Sign detection needs it to measure a
+            // block reference's drawn extents, which is how leader lines are
+            // matched to the thing they point at. Transient: the plan record
+            // persisted to storage keeps only paths and labels.
+            matrix: local,
             // Enclosing block names, outermost first. Used to stop a nested
             // block reference being counted as a second, separate sign when
             // its parent block has already been selected.

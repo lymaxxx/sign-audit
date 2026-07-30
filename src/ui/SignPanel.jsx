@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import PhotoSlot from './PhotoSlot.jsx'
+import SidesEditor from './SidesEditor.jsx'
 import { STATUS, STATUS_ORDER } from '../util/status.js'
 import { useStore } from '../state/storeContext.js'
 
@@ -91,25 +92,40 @@ export default function SignPanel({ sign, onClose, onLocate }) {
           />
         </label>
 
-        <PhotoSlot
-          side="A"
-          photoIds={sign.photos?.A ?? []}
-          disabled={!!busy}
-          onAdd={(file) => actions.addPhoto(sign, 'A', file)}
-          onRemove={(photoId) => actions.removePhoto(sign, 'A', photoId)}
-        />
-        <PhotoSlot
-          side="B"
-          photoIds={sign.photos?.B ?? []}
-          disabled={!!busy}
-          onAdd={(file) => actions.addPhoto(sign, 'B', file)}
-          onRemove={(photoId) => actions.removePhoto(sign, 'B', photoId)}
+        <SidesEditor
+          sides={sign.sides}
+          onChange={(sides) => actions.updateSign(sign.id, { sides })}
         />
 
+        {(sign.sides ?? []).map((side) => (
+          <PhotoSlot
+            key={side.id}
+            side={side.id}
+            photoIds={sign.photos?.[side.id] ?? []}
+            disabled={!!busy}
+            onAdd={(file) => actions.addPhoto(sign, side.id, file)}
+            onRemove={(photoId) => actions.removePhoto(sign, side.id, photoId)}
+          />
+        ))}
+
         <dl className="meta">
+          {Object.entries(sign.data ?? {}).map(([key, value]) =>
+            value ? (
+              <div key={key}>
+                <dt>{key}</dt>
+                <dd>{value}</dd>
+              </div>
+            ) : null,
+          )}
           <div>
             <dt>Source</dt>
-            <dd>{sign.source === 'added' ? 'Added on site' : `CAD block ${sign.blockName ?? ''}`}</dd>
+            <dd>
+              {sign.source === 'added'
+                ? 'Added on site'
+                : sign.source === 'loose'
+                  ? 'Drawn on the plan, no block'
+                  : `CAD block ${sign.blockName ?? ''}`}
+            </dd>
           </div>
           {sign.layer && (
             <div>
@@ -125,7 +141,7 @@ export default function SignPanel({ sign, onClose, onLocate }) {
           </div>
         </dl>
 
-        {sign.source === 'added' && (
+        {(sign.source === 'added' || sign.source === 'loose') && (
           <button
             type="button"
             className="danger"

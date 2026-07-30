@@ -17,12 +17,24 @@ const MIN_LABEL_PX = 6
 const LayerPaths = memo(function LayerPaths({ paths, hiddenKey }) {
   const hidden = new Set(hiddenKey ? hiddenKey.split('\n') : [])
   return (
-    <g fill="none" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+    <g strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
       {paths.map((path, index) =>
-        hidden.has(path.layer) ? null : (
+        hidden.has(path.layer) ? null : path.filled ? (
+          // Solid hatches. even-odd keeps holes in ring-shaped fills, and the
+          // slight transparency stops a large filled area burying line work.
           <path
             key={`${path.layer}-${path.color}-${index}`}
             d={path.d}
+            fill={path.color}
+            fillRule="evenodd"
+            fillOpacity={0.55}
+            stroke="none"
+          />
+        ) : (
+          <path
+            key={`${path.layer}-${path.color}-${index}`}
+            d={path.d}
+            fill="none"
             stroke={path.color}
             vectorEffect="non-scaling-stroke"
           />

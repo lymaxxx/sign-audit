@@ -120,15 +120,35 @@ export function signsToCsv(signs) {
     const text = value == null ? '' : String(value)
     return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
   }
-  const header = ['Name', 'Type', 'Status', 'Notes', 'Photos A', 'Photos B', 'X', 'Y', 'Source']
+
+  // Sides vary per sign, and so do the attributes carried over from the
+  // drawing, so both sets of columns are derived from the data rather than
+  // fixed. Without this a three-sided sign would silently lose a column.
+  const sideIds = [...new Set(signs.flatMap((s) => (s.sides ?? []).map((side) => side.id)))].sort()
+  const dataKeys = [...new Set(signs.flatMap((s) => Object.keys(s.data ?? {})))].sort()
+
+  const header = [
+    'Name',
+    'Type',
+    'Status',
+    'Notes',
+    ...dataKeys,
+    ...sideIds.flatMap((id) => [`Photos ${id}`, `Bearing ${id}`]),
+    'X',
+    'Y',
+    'Source',
+  ]
   const rows = signs.map((s) =>
     [
       s.name,
       s.type,
       s.status,
       s.notes,
-      s.photos?.A?.length ?? 0,
-      s.photos?.B?.length ?? 0,
+      ...dataKeys.map((key) => s.data?.[key] ?? ''),
+      ...sideIds.flatMap((id) => [
+        s.photos?.[id]?.length ?? 0,
+        s.sides?.find((side) => side.id === id)?.bearing ?? '',
+      ]),
       Math.round(s.x * 1000) / 1000,
       Math.round(s.y * 1000) / 1000,
       s.source,
