@@ -13,6 +13,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { parseDxf, looksLikeDxf } from '../src/dxf/parse.js'
+import { auditDxf, reconcile } from '../src/dxf/audit.js'
 import { buildPlan } from '../src/dxf/flatten.js'
 import {
   analyseInserts,
@@ -33,9 +34,11 @@ if (!looksLikeDxf(text)) {
   process.exit(1)
 }
 
+const census = auditDxf(text)
 const started = Date.now()
-const plan = buildPlan(parseDxf(text), { fileName: target.split('/').pop() })
+const plan = buildPlan(parseDxf(text, census), { fileName: target.split('/').pop() })
 const elapsed = Date.now() - started
+const ledger = reconcile(census, plan.stats.rendered, plan.stats.skipped)
 
 const analysis = analyseInserts(plan.inserts)
 const selection = suggestSelection(analysis)
@@ -54,8 +57,11 @@ console.log(
   `  bounds               ${plan.bounds.minX.toFixed(1)}, ${plan.bounds.minY.toFixed(1)} → ` +
     `${plan.bounds.maxX.toFixed(1)}, ${plan.bounds.maxY.toFixed(1)}`,
 )
-const skipped = Object.entries(plan.stats.unsupported)
-console.log(`  skipped entities     ${skipped.length ? skipped.map(([t, n]) => `${n}× ${t}`).join(', ') : 'none'}`)
+console.log('\n  entity support (occurrences in file / of those, in model space):')
+for (const row of ledger) {
+  const mark = row.status === 'ok' ? '  ok    ' : row.status === 'skipped' ? '  skip  ' : '  LOST  ' 
+  console.log(`  ${mark}${row.type.padEnd(14)} ${String(row.found).padStart(5)} in file, ${String(row.inModelSpace).padStart(4)} in model space`)
+}
 
 console.log('\n  blocks:')
 for (const block of analysis) {
