@@ -169,6 +169,59 @@ check(
 
 check('every sign has at least one side', signs.every((s) => s.sides.length >= 1))
 
+/* ---------------------------------------------------- malformed input cases */
+
+// Real drawings arrive damaged. Each of these used to lose the entire file:
+// one bad entity, or a transfer cut short, and nothing at all would open.
+const lines = text.split('\n')
+
+const withEmptyPolyline = (() => {
+  const out = []
+  let done = false
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    if (!done && lines[i].trim() === '0' && lines[i + 1].trim() === 'ENDSEC') {
+      out.push('  0', 'LWPOLYLINE', '  8', 'WALLS', ' 90', '0', ' 70', '0')
+      done = true
+    }
+    out.push(lines[i], lines[i + 1])
+  }
+  return out.join('\n')
+})()
+
+try {
+  const repaired = buildPlan(parseDxf(withEmptyPolyline), {})
+  check(
+    'a zero-vertex polyline does not lose the drawing',
+    repaired.stats.entities >= plan.stats.entities,
+    `${repaired.stats.entities} vs ${plan.stats.entities} entities`,
+  )
+} catch (error) {
+  check('a zero-vertex polyline does not lose the drawing', false, error.message)
+}
+
+// Cut mid-pair, so the dangling group code has to be dropped before the file
+// can be closed off and re-read.
+const truncated = lines.slice(0, Math.floor(lines.length / 2)).join('\n')
+try {
+  const salvaged = buildPlan(parseDxf(truncated), {})
+  check(
+    'a truncated file still imports what it can',
+    salvaged.stats.entities > 0,
+    `${salvaged.stats.entities} entities recovered`,
+  )
+} catch (error) {
+  check('a truncated file still imports what it can', false, error.message)
+}
+
+// A valid file with no drawing in it is not an error — it imports as an empty
+// plan. What matters is that it does not throw a group-code message at anyone.
+try {
+  const empty = buildPlan(parseDxf('0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n'), {})
+  check('an empty drawing imports as an empty plan', empty.stats.entities === 0 && empty.paths.length === 0)
+} catch (error) {
+  check('an empty drawing imports as an empty plan', false, error.message)
+}
+
 
 if (failures.length) {
   console.error(`\n✗ ${failures.length} check(s) failed:`)

@@ -2,23 +2,26 @@
 
 A field tool for auditing signage against a CAD plan, on an iPhone or iPad.
 
-Load a DXF of the site, and every sign block on it becomes a tappable marker on
-the drawing. Tap one to record notes, photograph side A and side B, and tick it
-off. Signs missing from the drawing can be dropped onto the plan on site and are
-marked "proposed" until someone decides otherwise.
+Load a DXF of the site, and every sign on it becomes a tappable marker on the
+drawing. Tap one to record notes, photograph each face, and tick it off. Signs
+missing from the drawing can be dropped onto the plan on site and are marked
+"proposed" until someone decides otherwise.
 
 It is a static web app with no backend. Everything runs on the device.
 
 ## Using it
 
 1. **Open a DXF plan.** The importer shows the blocks it found and asks which
-   ones are signs and where their names come from — a block attribute, text
-   inside the block, or the block name. It preselects its best guess and shows
-   a live preview of the resulting names.
+   are *markers* (where a sign physically is) and which are *data* callouts
+   (the table holding its number) — a block can be both. It preselects its best
+   guess and draws the result on the plan, live, so you can see what the audit
+   will look like before committing to it.
 2. **Walk the site.** Tap a sign on the plan, or find it in the Signs list.
-   Notes and photos save as you type; there is no save button.
-3. **Filter as you go.** By type (the prefix before the first underscore, so
-   `WF_01` is type `WF`) and by status. Filters apply to the plan as well as
+   Set how many faces it has and which way each one looks — one photo slot
+   appears per face, and each face draws as a tick on the plan. Notes and
+   photos save as you type; there is no save button.
+3. **Filter as you go.** By type — the layer the sign sits on, e.g.
+   `_DIRECTIONAL_SIGN` — and by status. Filters apply to the plan as well as
    the list, so you can show just the ones still to do.
 4. **Save your work out.** *Save project file* produces a single `.zip`
    containing the drawing, every note and every photo. It goes to Files,
@@ -94,21 +97,45 @@ explicitly at build time:
 BASE_PATH=/ npm run build
 ```
 
+## How signs are found
+
+Signage packages separate the sign from its data: a small rotated symbol where
+the sign stands, and a table of attributes parked in clear space, joined by a
+leader line. The importer recovers that link from the leader — matching each
+marker to the callout its leader reaches — which is exact where guessing is not.
+Two cheaper approaches were tried against a real drawing and rejected: matching
+a marker's block name to the callout's sign code cannot tell two instances of
+the same block apart, and nearest-callout-by-distance mispairs in dense areas.
+
+Signs drawn as loose geometry rather than blocks (a circle with a centre point)
+are found by shape. Only their position is taken — how many faces they have is
+set per sign in the app, because side letters vary in count and placement
+between drawings and a wrong guess is only discovered on site.
+
+A marker whose callout cannot be found still imports, flagged **needs review**.
+It is on the drawing; someone has to resolve it.
+
 ## File format support
 
 **DXF only, ASCII.** DWG is a proprietary binary format that no browser can
 read — export to DXF from AutoCAD or BricsCAD first.
 
-Supported entities: `LINE`, `LWPOLYLINE`, `POLYLINE` (including bulged arc
-segments), `CIRCLE`, `ARC`, `ELLIPSE`, `SPLINE`, `SOLID`, `3DFACE`, `POINT`,
-`TEXT`, `MTEXT`, and `INSERT` block references nested to any reasonable depth.
-Anything else is counted and reported in the import summary rather than
-silently dropped.
+Supported: `LINE`, `LWPOLYLINE`, `POLYLINE` (including bulged arc segments),
+`CIRCLE`, `ARC`, `ELLIPSE`, `SPLINE`, `HATCH` (both boundary forms, solid fills
+painted), `SOLID`, `3DFACE`, `POINT`, `TEXT`, `MTEXT`, `LEADER`, `MULTILEADER`,
+and `INSERT` block references nested to any reasonable depth. `WIPEOUT` is
+parsed and deliberately not drawn — it is a mask, and painting it would black
+out the plan.
 
-Sign names are read from `ATTRIB` values where present. Note that the
-underlying `dxf-parser` library does not handle `ATTRIB` itself — the app
-registers its own handler for it in `src/dxf/parse.js`, because that is where
-sign names almost always live.
+Several of these are gaps in the underlying `dxf-parser` library, filled by the
+app's own handlers in `src/dxf/handlers.js`. The library also *throws* on a
+zero-vertex polyline, which loses the entire file, so its `LWPOLYLINE` handler
+is replaced with a tolerant one, and a truncated file is closed off and re-read
+rather than abandoned.
+
+**The import summary is honest about what it could not read.** A raw census of
+the file is taken before parsing, independently of what the library surfaces, so
+anything unsupported is named rather than silently dropped.
 
 ## Development
 
@@ -135,10 +162,16 @@ PWA icons.
 ### Layout
 
 ```
-src/dxf/        DXF parsing, block flattening, geometry -> SVG, sign detection
+src/dxf/        parse.js      dxf-parser wrapper, error messages, recovery
+                handlers.js   entity types the library does not support
+                audit.js      raw census of the file, for honest diagnostics
+                flatten.js    blocks -> world coordinates -> baked SVG paths
+                geometry.js   transforms and entity -> path conversion
+                link.js       matching sign markers to their data callouts
+                detectSigns.js the import recipe and the signs it produces
 src/map/        Plan canvas: pan/zoom viewport, baked layer paths, markers
 src/state/      IndexedDB, the store, project file import/export
-src/ui/         Import wizard, sign panel, list, filters, layers
+src/ui/         Import wizard, sign panel, sides editor, list, filters
 ```
 
 Two design decisions shape most of the code:
@@ -149,3 +182,6 @@ Two design decisions shape most of the code:
 - **The mutable audit data is stored apart from the drawing.** Autosave fires
   on every keystroke, and re-serialising megabytes of path data each time would
   stall the UI.
+- **Nothing is guessed silently.** Where the app has to infer something — which
+  blocks are signs, which callout belongs to which marker — it shows the result
+  on the plan first and lets you correct it.

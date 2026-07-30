@@ -156,8 +156,9 @@ it to yourself and save it to Files.
 
 1. Open the app from your home screen
 2. Tap **Open a DXF plan** and pick the file
-3. The app shows the blocks it found and which one it thinks is your signs.
-   Check the preview of names looks right, then tap **Create audit**
+3. The app shows the blocks it found and marks which are sign *markers* and
+   which are *data* callouts, drawing the result on the plan as you change it.
+   Check the sign numbers look right, then tap **Start audit**
 4. Tap a sign on the plan, or find it in the **Signs** list
 
 Then, at the end of each day: **⋯ menu → Save project file**. That's a single

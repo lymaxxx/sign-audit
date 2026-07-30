@@ -70,15 +70,48 @@ export function explainParseFailure(error, audit) {
  * @returns {{header: object, entities: object[], blocks: object, tables: object}}
  * @throws {Error} with a human-readable message
  */
+/**
+ * Close off a file that stops part-way through.
+ *
+ * The scanner throws the moment it runs out of groups while still looking for
+ * a section end, which loses everything that was read up to that point. A
+ * drawing that was cut short in transfer is still mostly intact, and mostly
+ * intact is far more useful to someone on site than an error message, so the
+ * closing markers are supplied and the parse retried.
+ */
+function closeTruncated(text) {
+  const lines = text.replace(/\s+$/, '').split(/\r\n|\r|\n/)
+  // A DXF is a stream of code/value line pairs. A file cut mid-pair leaves a
+  // dangling code, which offsets every pair after it — so drop it before
+  // appending anything, or the repair is worse than the damage.
+  if (lines.length % 2 !== 0) lines.pop()
+  // Close whatever might still be open. The parser skips terminators it is not
+  // looking for, so an unnecessary one is harmless; a missing one is fatal.
+  lines.push('  0', 'ENDBLK', '  0', 'ENDSEC', '  0', 'EOF')
+  return `${lines.join('\n')}\n`
+}
+
 export function parseDxf(text, audit = null) {
-  const parser = new DxfParser()
-  for (const Handler of EXTRA_HANDLERS) parser.registerEntityHandler(Handler)
+  const parse = (source) => {
+    const parser = new DxfParser()
+    for (const Handler of EXTRA_HANDLERS) parser.registerEntityHandler(Handler)
+    return parser.parseSync(source)
+  }
 
   let dxf
   try {
-    dxf = parser.parseSync(text)
+    dxf = parse(text)
   } catch (error) {
-    throw new Error(explainParseFailure(error, audit), { cause: error })
+    if (/Unexpected end of input|after EOF group/.test(String(error?.message))) {
+      try {
+        dxf = parse(closeTruncated(text))
+        if (dxf) dxf.recovered = 'truncated'
+      } catch {
+        throw new Error(explainParseFailure(error, audit), { cause: error })
+      }
+    } else {
+      throw new Error(explainParseFailure(error, audit), { cause: error })
+    }
   }
   if (!dxf) throw new Error('This file could not be read as a DXF drawing.')
 
