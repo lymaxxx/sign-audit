@@ -4,6 +4,7 @@ import { searchPlaces } from '../services/nominatim.js'
 import { fetchStops, STOP_KINDS } from '../services/overpass.js'
 import { fetchOsmRoute } from '../services/osmRoute.js'
 import { haversine } from '../lib/geo.js'
+import { newId } from '../state/project.js'
 import { demoProject } from '../sample/demo.js'
 
 export default function DataPanel({
@@ -64,7 +65,7 @@ export default function DataPanel({
       kind: 'ok',
       text: project.lastImport.regrouped
         ? `Merged ${project.lastImport.merged} stop(s) into their twins — routes now share one marker per stop.`
-        : project.lastImport.routeImported
+        : project.lastImport.routeImport
           ? `Route imported — ${project.lastImport.added} new stops, ${project.lastImport.merged} matched to ones already here.`
           : `Added ${project.lastImport.added} stops (${project.lastImport.merged} platforms folded into existing stops).`,
     })
@@ -205,7 +206,7 @@ export default function DataPanel({
         {message && <p className={`notice ${message.kind}`}>{message.text}</p>}
       </Section>
 
-      <OsmRouteImport project={project} dispatch={dispatch} onRouteImported={onRouteImported} />
+      <OsmRouteImport dispatch={dispatch} onRouteImported={onRouteImported} />
 
       <Section title={`Stops (${project.stops.length})`}>
         {!project.stops.length && (
@@ -298,7 +299,7 @@ export default function DataPanel({
   )
 }
 
-function OsmRouteImport({ project, dispatch, onRouteImported }) {
+function OsmRouteImport({ dispatch, onRouteImported }) {
   const [input, setInput] = useState('')
   const [bwdInput, setBwdInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -345,14 +346,15 @@ function OsmRouteImport({ project, dispatch, onRouteImported }) {
     }
   }
 
-  useEffect(() => {
-    if (project.lastImport?.routeImported) onRouteImported?.(project.lastImport.routeImported)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.lastImport])
-
   const addToProject = () => {
     if (!preview) return
-    dispatch({ type: 'importOsmRoute', route: preview.route, mergeRadius })
+    // Mint the id here rather than reading it back out of project state
+    // afterwards: a "route was just imported" flag living in the project
+    // persists (localStorage included), so reacting to it would re-fire this
+    // navigation every time the panel mounts.
+    const routeId = newId('r')
+    dispatch({ type: 'importOsmRoute', route: preview.route, mergeRadius, routeId })
+    onRouteImported?.(routeId)
     setPreview(null)
     setInput('')
     setBwdInput('')

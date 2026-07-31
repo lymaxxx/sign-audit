@@ -457,7 +457,9 @@ export function projectReducer(state, action) {
       const bwdResolved = fetched.bwd ? resolved.slice(fetched.fwd.stops.length) : []
 
       const route = {
-        id: newId('r'),
+        // The caller may supply the id so it can act on the new route without
+        // reading it back out of state afterwards — see DataPanel.addToProject.
+        id: action.routeId || newId('r'),
         number: fetched.ref || String(state.routes.length + 1),
         name: fetched.name || 'Imported route',
         color: normaliseHexColor(fetched.colour) || PALETTE[state.routes.length % PALETTE.length],
@@ -474,7 +476,10 @@ export function projectReducer(state, action) {
         ...state,
         stops,
         routes: [...state.routes, route],
-        lastImport: { added, merged, at: Date.now(), routeImported: route.id },
+        // Deliberately no "a route was imported" flag here: this object
+        // persists (localStorage included), so anything reacting to it would
+        // re-fire on every mount long after the import.
+        lastImport: { added, merged, at: Date.now(), routeImport: true },
       }
     }
 
