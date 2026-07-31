@@ -8,19 +8,41 @@ export const ENDPOINTS = [
   'https://overpass.private.coffee/api/interpreter',
 ]
 
+// A mirror that never responds (no error, just silence — surprisingly common
+// with the free public Overpass instances) would otherwise hang the request
+// forever, since `fetch` has no timeout of its own. This aborts a single
+// attempt after `ms` while still honouring the caller's own abort signal.
+function withTimeout(externalSignal, ms) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), ms)
+  const onExternalAbort = () => controller.abort(externalSignal.reason)
+  externalSignal?.addEventListener('abort', onExternalAbort)
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer)
+      externalSignal?.removeEventListener('abort', onExternalAbort)
+    },
+  }
+}
+
 // Posts an Overpass QL query, trying each mirror in turn. Shared by the stop
 // importer below and by the OSM route importer.
-export async function queryOverpass(query, { signal } = {}) {
+export async function queryOverpass(query, { signal, timeoutMs = 25000 } = {}) {
   const body = new URLSearchParams({ data: query })
   let lastError = null
   for (const url of ENDPOINTS) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    const attempt = withTimeout(signal, timeoutMs)
     try {
-      const res = await fetch(url, { method: 'POST', body, signal })
+      const res = await fetch(url, { method: 'POST', body, signal: attempt.signal })
       if (!res.ok) throw new Error(`Overpass replied ${res.status}`)
       return await res.json()
     } catch (err) {
-      if (err.name === 'AbortError') throw err
-      lastError = err
+      if (signal?.aborted) throw err // the caller cancelled — don't keep trying mirrors
+      lastError = err.name === 'AbortError' || err.name === 'TimeoutError' ? new Error(`Timed out after ${timeoutMs / 1000}s`) : err
+    } finally {
+      attempt.cleanup()
     }
   }
   throw new Error(

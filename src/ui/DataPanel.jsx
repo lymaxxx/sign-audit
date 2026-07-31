@@ -300,7 +300,9 @@ export default function DataPanel({
 
 function OsmRouteImport({ project, dispatch, onRouteImported }) {
   const [input, setInput] = useState('')
+  const [bwdInput, setBwdInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState(null)
   const [preview, setPreview] = useState(null)
   const [mergeRadius, setMergeRadius] = useState(30)
@@ -310,13 +312,23 @@ function OsmRouteImport({ project, dispatch, onRouteImported }) {
     e.preventDefault()
     if (!input.trim()) return
     setLoading(true)
+    setElapsed(0)
     setError(null)
     setPreview(null)
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
+    const tick = setInterval(() => setElapsed((s) => s + 1), 1000)
     try {
-      const route = await fetchOsmRoute(input, { signal: controller.signal })
+      const primary = await fetchOsmRoute(input, { signal: controller.signal })
+      let route = primary
+      if (bwdInput.trim()) {
+        // An explicit return-direction ID always wins over whatever the
+        // primary relation brought (e.g. if it turned out to be a
+        // route_master already carrying both directions).
+        const second = await fetchOsmRoute(bwdInput, { signal: controller.signal })
+        route = { ...primary, bwd: second.fwd }
+      }
       const legCount = (dirLegs) => dirLegs.filter((l) => !l.pending).length
       setPreview({
         route,
@@ -328,6 +340,7 @@ function OsmRouteImport({ project, dispatch, onRouteImported }) {
     } catch (err) {
       if (err.name !== 'AbortError') setError(err.message)
     } finally {
+      clearInterval(tick)
       setLoading(false)
     }
   }
@@ -342,6 +355,7 @@ function OsmRouteImport({ project, dispatch, onRouteImported }) {
     dispatch({ type: 'importOsmRoute', route: preview.route, mergeRadius })
     setPreview(null)
     setInput('')
+    setBwdInput('')
   }
 
   return (
@@ -349,7 +363,7 @@ function OsmRouteImport({ project, dispatch, onRouteImported }) {
       <p className="muted small">
         Paste a route's relation ID or its openstreetmap.org URL — the same relation you'd get to
         by clicking a stop there and picking a route. Both the stops and the road/rail geometry
-        come across; a route_master brings in both directions.
+        come across; a route_master brings in both directions automatically.
       </p>
       <form onSubmit={fetchPreview} className="search-form">
         <input
@@ -361,6 +375,23 @@ function OsmRouteImport({ project, dispatch, onRouteImported }) {
           {loading ? '…' : 'Fetch'}
         </button>
       </form>
+      <Field
+        label="Return direction relation ID (optional)"
+        hint="If the two directions are separate relations with no shared route_master, paste the return one here — it always overrides whatever direction the first ID brought on its own."
+      >
+        <input
+          value={bwdInput}
+          onChange={(e) => setBwdInput(e.target.value)}
+          placeholder="Leave blank if the ID above already covers both directions"
+          disabled={loading}
+        />
+      </Field>
+      {loading && (
+        <p className="muted small">
+          Fetching from OpenStreetMap… {elapsed}s{' '}
+          {elapsed > 8 ? '(long routes can take up to a minute — this is normal)' : ''}
+        </p>
+      )}
       <Field
         label="Merge platforms within (m)"
         hint="Same as the area import — folds a stop_position/platform pair or two close-together records into one stop."
