@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { buildPlan } from '../dxf/flatten.js'
+import { buildPlan, describeUnresolvedInserts } from '../dxf/flatten.js'
 import { looksLikeDxf, parseDxf } from '../dxf/parse.js'
 import { auditDxf, describeLosses, reconcile } from '../dxf/audit.js'
 import { analyseDrawing, buildSigns, suggestRecipe } from '../dxf/detectSigns.js'
@@ -156,6 +156,7 @@ export default function ImportScreen() {
   if (draft && recipe) {
     const { plan, analysis, ledger } = draft
     const lost = describeLosses(ledger)
+    const unresolved = describeUnresolvedInserts(plan.stats.unresolvedInserts)
 
     return (
       <div className="wizard">
@@ -167,6 +168,7 @@ export default function ImportScreen() {
               {analysis.leaders.length} leader lines
               {lost && <span className="wizard__lost"> · could not read {lost}</span>}
             </p>
+            {unresolved && <p className="muted small wizard__lost">{unresolved}</p>}
           </div>
           <button type="button" className="ghost" onClick={() => setDraft(null)}>
             Start over
