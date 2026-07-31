@@ -50,13 +50,24 @@ export default function MapCanvas({
   basemap,
   insertAt,
   onInserted,
+  onLinkStop,
 }) {
   const hostRef = useRef(null)
   const mapRef = useRef(null)
   const layersRef = useRef({})
   const tileRef = useRef(null)
   const stateRef = useRef({})
-  stateRef.current = { project, dispatch, tool, editing, onSelectStop, onBbox, insertAt, onInserted }
+  stateRef.current = {
+    project,
+    dispatch,
+    tool,
+    editing,
+    onSelectStop,
+    onBbox,
+    insertAt,
+    onInserted,
+    onLinkStop,
+  }
 
   // --- map bootstrap
   useEffect(() => {
@@ -423,8 +434,19 @@ export default function MapCanvas({
         marker.bindTooltip(label, { direction: 'top', offset: [0, -6] })
         marker.on('click', (e) => {
           L.DomEvent.stop(e)
-          const { editing: ed, dispatch: d, onSelectStop: sel, insertAt: ins } = stateRef.current
+          const {
+            editing: ed,
+            dispatch: d,
+            onSelectStop: sel,
+            insertAt: ins,
+            tool: t,
+            onLinkStop: link,
+          } = stateRef.current
           sel?.(stop.id)
+          if (t === 'link') {
+            link?.(stop.id)
+            return
+          }
           if (ins) {
             d({ type: 'insertStop', ...ins, stopId: stop.id, platformId: platform.id })
             stateRef.current.onInserted?.()

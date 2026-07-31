@@ -37,10 +37,44 @@ function allowedDirections(angleStep) {
   return dirs
 }
 
-function deviationFromAllowed(deg, angleStep) {
+export function deviationFromAllowed(deg, angleStep) {
   const step = 360 / Math.max(2, Math.round(360 / angleStep))
   const k = Math.round(deg / step)
   return angDiff(deg, k * step)
+}
+
+// How "clean" a finished layout is: fewer crossings and closer-to-grid
+// bearings are both better. Used to pick the best of several random-seed
+// attempts (see runBestLayout) — crossings dominate since a stray crossing is
+// the single ugliest thing a metro map can have.
+export function scoreLayout(graph, positions, angleStep) {
+  const P = graph.nodes.map((n) => positions.get(n.stopId))
+  let crossings = 0
+  const edges = graph.edges
+  for (let i = 0; i < edges.length; i++) {
+    const a = edges[i]
+    for (let j = i + 1; j < edges.length; j++) {
+      const b = edges[j]
+      if (a.u === b.u || a.u === b.v || a.v === b.u || a.v === b.v) continue
+      if (
+        segmentsIntersect(
+          [P[a.u].x, P[a.u].y],
+          [P[a.v].x, P[a.v].y],
+          [P[b.u].x, P[b.u].y],
+          [P[b.v].x, P[b.v].y],
+        )
+      ) {
+        crossings += 1
+      }
+    }
+  }
+  let devSum = 0
+  for (const e of edges) {
+    const deg = Math.atan2(P[e.v].y - P[e.u].y, P[e.v].x - P[e.u].x) * DEG
+    const dev = deviationFromAllowed(deg, angleStep)
+    devSum += dev * dev
+  }
+  return { crossings, devSum, total: crossings * 1e5 + devSum }
 }
 
 export function* layoutIterator(graph, options = {}) {
@@ -116,7 +150,7 @@ export function* layoutIterator(graph, options = {}) {
     straight: 1.3,
     nodeNode: 3.2,
     nodeEdge: 2.2,
-    crossing: 4,
+    crossing: 7,
   }
 
   // --- spatial hash over node positions, rebuilt every iteration
@@ -309,7 +343,39 @@ export function* layoutIterator(graph, options = {}) {
     if (moved === 0 && iter > 4) break
   }
 
+  snapNearAlignedAxes(xs, ys, fixed, edgeLength * 0.05)
+
   return finalise(graph, xs, ys)
+}
+
+// Stations the solver placed almost-but-not-quite on the same row or column
+// (a fraction of a pixel apart, from floating point drift or two independent
+// local optima) are pulled onto that shared line. This is what gives the
+// finished map its rhythm — real transit diagrams line stations up along
+// shared rows/columns far more often than a per-station optimum would. Pinned
+// (manually dragged) stations are never moved, only ever snapped *toward*.
+function snapNearAlignedAxes(xs, ys, fixed, epsilon) {
+  const n = xs.length
+  const movable = []
+  for (let i = 0; i < n; i++) if (!fixed[i]) movable.push(i)
+
+  const snapAxis = (arr) => {
+    const idx = movable.slice().sort((a, b) => arr[a] - arr[b])
+    let start = 0
+    for (let i = 1; i <= idx.length; i++) {
+      if (i === idx.length || arr[idx[i]] - arr[idx[start]] > epsilon) {
+        if (i - start > 1) {
+          let sum = 0
+          for (let k = start; k < i; k++) sum += arr[idx[k]]
+          const avg = sum / (i - start)
+          for (let k = start; k < i; k++) arr[idx[k]] = avg
+        }
+        start = i
+      }
+    }
+  }
+  snapAxis(xs)
+  snapAxis(ys)
 }
 
 function finalise(graph, xs, ys) {
@@ -339,4 +405,36 @@ export function runLayout(graph, options) {
   let step = it.next()
   while (!step.done) step = it.next()
   return step.value
+}
+
+// Runs the solver from a few different random shuffles and keeps the one
+// with the fewest line crossings (ties broken by angle cleanliness) — a
+// single hill-climb can get stuck in a mediocre local optimum, and trying a
+// handful more nearly always finds a tidier layout without the user having
+// to click "New variation" by hand. Capped to small/medium networks so a big
+// import still redraws in about the same time as before.
+export function* bestLayoutIterator(graph, options = {}) {
+  const { seed = 1, angleStep = 45 } = options
+  const n = graph.nodes.length
+  const seeds = n > 0 && n <= 150 ? [seed, seed + 7919, seed + 15551] : [seed]
+  let best = null
+
+  for (let a = 0; a < seeds.length; a++) {
+    const it = layoutIterator(graph, { ...options, seed: seeds[a] })
+    let step = it.next()
+    while (!step.done) {
+      yield {
+        attempt: a + 1,
+        attempts: seeds.length,
+        iteration: step.value.iteration,
+        iterations: step.value.iterations,
+      }
+      step = it.next()
+    }
+    const result = step.value
+    if (!result.positions.size) return result
+    const score = scoreLayout(graph, result.positions, angleStep)
+    if (!best || score.total < best.score.total) best = { ...result, score }
+  }
+  return best
 }

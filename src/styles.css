@@ -730,3 +730,10 @@ input[type='checkbox'] {
 .leg.detour {
   color: var(--warn);
 }
+
+.alt-name {
+  font-style: normal;
+  color: var(--accent);
+  margin-left: 5px;
+  font-size: 11px;
+}

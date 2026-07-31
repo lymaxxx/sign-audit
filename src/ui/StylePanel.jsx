@@ -9,6 +9,10 @@ const ANGLE_OPTIONS = [
   { value: '15', label: '15° — near-geographic' },
 ]
 
+function wrap180(deg) {
+  return ((((deg + 180) % 360) + 360) % 360) - 180
+}
+
 export default function StylePanel({ project, dispatch }) {
   const s = project.schematic
   const set = (patch) => dispatch({ type: 'setSchematic', patch })
@@ -47,6 +51,30 @@ export default function StylePanel({ project, dispatch }) {
         <p className="muted small">
           Higher strictness snaps harder to the chosen angles; more passes tidy the map further but
           take longer.
+        </p>
+      </Section>
+
+      <Section title="Orientation">
+        <Slider
+          label="Rotation"
+          value={s.rotation}
+          min={-180}
+          max={180}
+          step={1}
+          unit="°"
+          onChange={(v) => set({ rotation: v })}
+        />
+        <div className="button-row">
+          <button onClick={() => set({ rotation: wrap180(s.rotation - 90) })}>⟲ Rotate -90°</button>
+          <button onClick={() => set({ rotation: wrap180(s.rotation + 90) })}>⟳ Rotate +90°</button>
+          <button onClick={() => set({ rotation: wrap180(s.rotation + 180) })}>⇅ Flip 180°</button>
+          <button onClick={() => set({ rotation: 0 })} disabled={!s.rotation}>
+            Reset
+          </button>
+        </div>
+        <p className="muted small">
+          Turns the whole diagram around its centre — the layout itself isn't recomputed, so
+          dragged stations and export stay consistent at any angle.
         </p>
       </Section>
 

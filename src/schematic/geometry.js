@@ -1,6 +1,40 @@
 // Path geometry for the schematic renderer: parallel offsets for lines that
 // share a corridor, rounded / organic corners, and arrow placement.
 
+// Centroid of a stopId -> {x,y} position map.
+export function centroidOfPositions(positions) {
+  let cx = 0
+  let cy = 0
+  let n = 0
+  for (const p of positions.values()) {
+    cx += p.x
+    cy += p.y
+    n += 1
+  }
+  return n ? { x: cx / n, y: cy / n } : { x: 0, y: 0 }
+}
+
+export function rotatePoint(p, center, degrees) {
+  if (!degrees) return p
+  const rad = (degrees * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  const dx = p.x - center.x
+  const dy = p.y - center.y
+  return { x: center.x + dx * cos - dy * sin, y: center.y + dx * sin + dy * cos }
+}
+
+// Rotates every position in the map around their common centroid. Used to
+// derive the on-screen (display) layout from the canonical, unrotated one
+// that overrides and the layout solver work in.
+export function rotatePositions(positions, degrees, center) {
+  if (!degrees) return positions
+  const c = center || centroidOfPositions(positions)
+  const out = new Map()
+  for (const [id, p] of positions) out.set(id, rotatePoint(p, c, degrees))
+  return out
+}
+
 export function unit(ax, ay, bx, by) {
   const dx = bx - ax
   const dy = by - ay

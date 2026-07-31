@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { buildNetworkGraph } from './graph.js'
-import { layoutIterator } from './layout.js'
+import { bestLayoutIterator } from './layout.js'
 import { buildSchematic } from './build.js'
+import { centroidOfPositions, rotatePoint, rotatePositions } from './geometry.js'
 
 // Runs the layout optimiser in animation-frame slices so the UI keeps
 // breathing while a big network settles.
@@ -20,7 +21,7 @@ function useSchematicLayout(project, nonce) {
       return undefined
     }
     let cancelled = false
-    const it = layoutIterator(graph, {
+    const it = bestLayoutIterator(graph, {
       angleStep: s.angleStep,
       iterations: s.iterations,
       edgeLength: s.edgeLength,
@@ -65,10 +66,25 @@ export default function SchematicView({ project, dispatch, onSelectStop }) {
   const [drag, setDrag] = useState(null)
   const [hovered, setHovered] = useState(null)
 
+  // `positions` (from the solver + manual overrides) is always canonical and
+  // unrotated — rotation is a pure display transform derived from it, so
+  // overrides stay meaningful even if the rotation is changed later.
+  const displayPositions = useMemo(
+    () => (positions ? rotatePositions(positions, s.rotation) : positions),
+    [positions, s.rotation],
+  )
+
   const model = useMemo(() => {
-    if (!positions || graph.empty) return null
-    return buildSchematic(project, graph, positions, s)
-  }, [positions, graph, project, s])
+    if (!displayPositions || graph.empty) return null
+    // `positions` can briefly lag behind a `graph` that just changed shape —
+    // a stop added, deleted, split or merged — while the solver effect below
+    // is still catching up. Treat that the same as "not ready yet" (the
+    // loading UI covers it) instead of crashing on a missing entry.
+    for (const node of graph.nodes) {
+      if (!displayPositions.has(node.stopId)) return null
+    }
+    return buildSchematic(project, graph, displayPositions, s)
+  }, [displayPositions, graph, project, s])
 
   useLayoutEffect(() => {
     const el = containerRef.current
@@ -137,6 +153,9 @@ export default function SchematicView({ project, dispatch, onSelectStop }) {
       stopId: marker.stopId,
       dx: world.x - marker.centerX,
       dy: world.y - marker.centerY,
+      // the centroid used to derive display positions from canonical ones,
+      // fixed for the whole drag so the inverse rotation stays consistent
+      center: centroidOfPositions(positions),
     })
     onSelectStop?.(marker.stopId)
   }
@@ -148,6 +167,9 @@ export default function SchematicView({ project, dispatch, onSelectStop }) {
       return
     }
     const world = toWorld(e.clientX, e.clientY)
+    // The pointer and the marker it's dragging both live in display (rotated)
+    // space; snap on-screen, then rotate back into the canonical space that
+    // `positions` and overrides are stored in.
     let x = world.x - drag.dx
     let y = world.y - drag.dy
     if (!e.shiftKey) {
@@ -155,13 +177,14 @@ export default function SchematicView({ project, dispatch, onSelectStop }) {
       x = Math.round(x / grid) * grid
       y = Math.round(y / grid) * grid
     }
+    const canonical = s.rotation ? rotatePoint({ x, y }, drag.center, -s.rotation) : { x, y }
     setPositions((prev) => {
       if (!prev) return prev
       const next = new Map(prev)
-      next.set(drag.stopId, { x, y })
+      next.set(drag.stopId, canonical)
       return next
     })
-    setDrag({ ...drag, lastX: x, lastY: y })
+    setDrag({ ...drag, lastX: canonical.x, lastY: canonical.y })
   }
 
   const onPointerUp = () => {
@@ -266,7 +289,10 @@ export default function SchematicView({ project, dispatch, onSelectStop }) {
 
         {progress && (
           <div className="layout-progress">
-            Generating schematic… {progress.iteration}/{progress.iterations}
+            Generating schematic…{' '}
+            {progress.attempts > 1
+              ? `variant ${progress.attempt}/${progress.attempts} · ${progress.iteration}/${progress.iterations}`
+              : `${progress.iteration}/${progress.iterations}`}
           </div>
         )}
         <div className="schematic-hint">

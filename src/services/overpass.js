@@ -2,11 +2,31 @@
 
 import { networkHint } from '../lib/env.js'
 
-const ENDPOINTS = [
+export const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
 ]
+
+// Posts an Overpass QL query, trying each mirror in turn. Shared by the stop
+// importer below and by the OSM route importer.
+export async function queryOverpass(query, { signal } = {}) {
+  const body = new URLSearchParams({ data: query })
+  let lastError = null
+  for (const url of ENDPOINTS) {
+    try {
+      const res = await fetch(url, { method: 'POST', body, signal })
+      if (!res.ok) throw new Error(`Overpass replied ${res.status}`)
+      return await res.json()
+    } catch (err) {
+      if (err.name === 'AbortError') throw err
+      lastError = err
+    }
+  }
+  throw new Error(
+    `Could not reach any Overpass server (${lastError ? lastError.message : 'unknown error'}). Try again in a moment.${networkHint()}`,
+  )
+}
 
 export const STOP_KINDS = {
   bus: 'Bus stops',
@@ -46,32 +66,27 @@ function kindOf(tags) {
 }
 
 export async function fetchStops(bbox, kinds, { signal } = {}) {
-  const body = new URLSearchParams({ data: queryFor(bbox, kinds) })
-  let lastError = null
-  for (const url of ENDPOINTS) {
-    try {
-      const res = await fetch(url, { method: 'POST', body, signal })
-      if (!res.ok) throw new Error(`Overpass replied ${res.status}`)
-      const json = await res.json()
-      return (json.elements || [])
-        .filter((el) => el.type === 'node')
-        .map((el) => {
-          const tags = el.tags || {}
-          return {
-            osmId: `n${el.id}`,
-            name: tags.name || tags['name:en'] || tags.ref || 'Unnamed stop',
-            lat: el.lat,
-            lon: el.lon,
-            kind: kindOf(tags),
-            operator: tags.operator || '',
-          }
-        })
-    } catch (err) {
-      if (err.name === 'AbortError') throw err
-      lastError = err
-    }
-  }
-  throw new Error(
-    `Could not reach any Overpass server (${lastError ? lastError.message : 'unknown error'}). Try a smaller area or retry in a moment.${networkHint()}`,
-  )
+  const json = await queryOverpass(queryFor(bbox, kinds), { signal })
+  return (json.elements || [])
+    .filter((el) => el.type === 'node')
+    .map((el) => {
+      const tags = el.tags || {}
+      return {
+        osmId: `n${el.id}`,
+        name: tags.name || tags['name:en'] || tags.ref || 'Unnamed stop',
+        lat: el.lat,
+        lon: el.lon,
+        kind: kindOf(tags),
+        operator: tags.operator || '',
+      }
+    })
 }
+
+export function kindOfRoute(routeTag) {
+  if (routeTag === 'tram' || routeTag === 'light_rail') return 'tram'
+  if (routeTag === 'train' || routeTag === 'subway' || routeTag === 'monorail') return 'rail'
+  if (routeTag === 'ferry') return 'ferry'
+  return 'bus'
+}
+
+export { kindOf }

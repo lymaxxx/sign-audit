@@ -33,6 +33,7 @@ export const defaultSchematic = {
   edgeLength: 92,
   strictness: 2.2,
   seed: 1,
+  rotation: 0, // display-only rotation in degrees, around the diagram centroid
   lineWidth: 8,
   lineGap: 9,
   cornerRadius: 22,
@@ -210,6 +211,15 @@ export function platformOf(stop, platformId) {
   return list.find((p) => p.id === platformId) || null
 }
 
+// A stop's name, plus any manually-linked alternate names (the "same stop,
+// different name on each side of the road" case) joined with a small arrow so
+// it reads as one place with two faces rather than two unrelated names.
+export function displayStopName(stop) {
+  const alt = stop.altNames || []
+  if (!alt.length) return stop.name
+  return [stop.name, ...alt].join(' ⇄ ')
+}
+
 // "Market Square" for a single-platform stop, "Market Square · east" otherwise.
 export function platformLabelFor(stop, platform) {
   const list = stop.platforms || []
@@ -237,6 +247,53 @@ export function entryPoint(project, entry) {
   return platform ? [platform.lat, platform.lon] : [stop.lat, stop.lon]
 }
 
+function dedupeNames(names, exclude) {
+  const seen = new Set([exclude])
+  const out = []
+  for (const n of names) {
+    if (!n || seen.has(n)) continue
+    seen.add(n)
+    out.push(n)
+  }
+  return out
+}
+
+function normaliseHexColor(value) {
+  if (!value) return null
+  const hex = value.startsWith('#') ? value : `#${value}`
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : null
+}
+
+// Turns a list of {stopId, platformId} (where each entry resolved to after
+// merging) plus the importer's per-leg geometry into a route direction,
+// collapsing any stops that resolved to the very same place back-to-back
+// (can happen when two OSM stop members turn out to be the same merged
+// stop). A leg is only trusted as-is when neither of its endpoints just got
+// collapsed — anywhere that's uncertain simply falls back to auto-routing,
+// same as a leg drawn by hand.
+function buildDirFromResolved(resolvedStops, fetchedLegs) {
+  const entries = []
+  const legs = []
+  resolvedStops.forEach((r, i) => {
+    const prev = entries[entries.length - 1]
+    if (prev && prev.stopId === r.stopId) {
+      prev.dirty = true
+      return
+    }
+    if (entries.length > 0) {
+      const leg = fetchedLegs[i - 1]
+      const trusted = !prev.dirty && leg && !leg.pending
+      legs.push(trusted ? { vias: [], coords: leg.coords, status: 'road' } : pendingLeg())
+    }
+    entries.push({ stopId: r.stopId, platformId: r.platformId, dirty: false })
+  })
+  return {
+    stopIds: entries.map((e) => e.stopId),
+    platformIds: entries.map((e) => e.platformId),
+    legs,
+  }
+}
+
 function nearestPlatformDistance(stop, lat, lon) {
   return (stop.platforms || []).reduce(
     (min, p) => Math.min(min, haversine([p.lat, p.lon], [lat, lon])),
@@ -245,7 +302,9 @@ function nearestPlatformDistance(stop, lat, lon) {
 }
 
 // Adds freshly downloaded platform records to the existing stops, folding
-// same-name platforms within `mergeRadius` into one stop.
+// same-name platforms within `mergeRadius` into one stop. `resolved` mirrors
+// `incoming` 1:1 with where each record ended up — used by the OSM route
+// importer to know which stop/platform each stop it just fetched now is.
 export function mergeIncomingStops(existing, incoming, mergeRadius) {
   const out = existing.map((s) => ({ ...s, platforms: (s.platforms || []).slice() }))
   const keyed = new Map()
@@ -257,11 +316,14 @@ export function mergeIncomingStops(existing, incoming, mergeRadius) {
 
   let added = 0
   let merged = 0
+  const resolved = []
   for (const record of incoming) {
-    const alreadyKnown = out.some((s) =>
-      (s.platforms || []).some((p) => p.osmId && p.osmId === record.osmId),
-    )
-    if (alreadyKnown) continue
+    const known = out.find((s) => (s.platforms || []).some((p) => p.osmId && p.osmId === record.osmId))
+    if (known) {
+      const platform = known.platforms.find((p) => p.osmId === record.osmId)
+      resolved.push({ stopId: known.id, platformId: platform.id })
+      continue
+    }
 
     const key = stopGroupKey(record.name)
     const candidates = mergeRadius > 0 ? keyed.get(key) || [] : []
@@ -278,16 +340,18 @@ export function mergeIncomingStops(existing, incoming, mergeRadius) {
     const platform = makePlatform(record)
     if (host !== null) {
       out[host] = stopFromPlatforms([...out[host].platforms, platform], out[host].id)
+      resolved.push({ stopId: out[host].id, platformId: platform.id })
       merged += 1
     } else {
       const stop = stopFromPlatforms([platform])
       out.push(stop)
+      resolved.push({ stopId: stop.id, platformId: platform.id })
       if (!keyed.has(key)) keyed.set(key, [])
       keyed.get(key).push(out.length - 1)
       added += 1
     }
   }
-  return { stops: out, added, merged }
+  return { stops: out, added, merged, resolved }
 }
 
 // Re-groups stops that are already in the project (used by "merge duplicate
@@ -368,6 +432,43 @@ export function projectReducer(state, action) {
         action.mergeRadius ?? 0,
       )
       return { ...state, stops, lastImport: { added, merged, at: Date.now() } }
+    }
+
+    // Drops in a route parsed from an OSM relation (see src/services/osmRoute.js):
+    // its stops are merged into the project like any other import, and its
+    // legs keep the real OSM road/rail geometry where the importer managed to
+    // chain it, falling back to normal OSRM auto-routing where it couldn't.
+    case 'importOsmRoute': {
+      const fetched = action.route
+      const incoming = [...fetched.fwd.stops, ...(fetched.bwd ? fetched.bwd.stops : [])]
+      const { stops, resolved, added, merged } = mergeIncomingStops(
+        state.stops.map((s) => ({ ...s })),
+        incoming,
+        action.mergeRadius ?? 30,
+      )
+      const fwdResolved = resolved.slice(0, fetched.fwd.stops.length)
+      const bwdResolved = fetched.bwd ? resolved.slice(fetched.fwd.stops.length) : []
+
+      const route = {
+        id: newId('r'),
+        number: fetched.ref || String(state.routes.length + 1),
+        name: fetched.name || 'Imported route',
+        color: normaliseHexColor(fetched.colour) || PALETTE[state.routes.length % PALETTE.length],
+        mode: fetched.kind || 'bus',
+        snap: true,
+        visible: true,
+        dirs: {
+          fwd: normaliseDirection(buildDirFromResolved(fwdResolved, fetched.fwd.legs)),
+          bwd: fetched.bwd ? normaliseDirection(buildDirFromResolved(bwdResolved, fetched.bwd.legs)) : null,
+        },
+      }
+
+      return {
+        ...state,
+        stops,
+        routes: [...state.routes, route],
+        lastImport: { added, merged, at: Date.now(), routeImported: route.id },
+      }
     }
 
     case 'addStop':
@@ -458,6 +559,106 @@ export function projectReducer(state, action) {
         overrides,
         lastImport: { added: 0, merged: groupsMerged, at: Date.now(), regrouped: true },
       }
+    }
+
+    // Manually declares two stops to be the same physical place with
+    // different names on each side (the "Gibraltar case") — automatic
+    // grouping only catches names that differ by a recognisable qualifier, so
+    // this is for names that are simply unrelated. `keepId` keeps its
+    // identity (and any of its own alt names); `mergeId`'s name is folded in
+    // as an alt name rather than discarded, and its platforms join keepId's.
+    case 'linkStops': {
+      const keep = state.stops.find((s) => s.id === action.keepId)
+      const other = state.stops.find((s) => s.id === action.mergeId)
+      if (!keep || !other || keep.id === other.id) return state
+
+      const platforms = [...keep.platforms, ...other.platforms]
+      const lat = platforms.reduce((sum, p) => sum + p.lat, 0) / platforms.length
+      const lon = platforms.reduce((sum, p) => sum + p.lon, 0) / platforms.length
+      const altNames = dedupeNames(
+        [...(keep.altNames || []), other.name, ...(other.altNames || [])],
+        keep.name,
+      )
+      const merged = { ...keep, lat, lon, platforms, altNames }
+
+      const stops = state.stops.filter((s) => s.id !== other.id).map((s) => (s.id === keep.id ? merged : s))
+
+      // A `null` platformId meant "this stop's own (usually only) platform" —
+      // fine before the merge, but the merged stop's centre is now a midpoint
+      // between two platforms, so every existing call has to be pinned to the
+      // platform it actually meant, or routes would silently jump to that
+      // midpoint.
+      const keepDefault = keep.platforms[0]?.id ?? null
+      const otherDefault = other.platforms[0]?.id ?? null
+      const routes = state.routes.map((route) => {
+        const dirs = {}
+        for (const key of ['fwd', 'bwd']) {
+          const dir = route.dirs[key]
+          if (!dir) {
+            dirs[key] = dir
+            continue
+          }
+          const entries = dirEntries(dir).map((entry) => {
+            if (entry.stopId === other.id) {
+              return { stopId: keep.id, platformId: entry.platformId ?? otherDefault }
+            }
+            if (entry.stopId === keep.id) {
+              return { stopId: keep.id, platformId: entry.platformId ?? keepDefault }
+            }
+            return entry
+          })
+          dirs[key] = normaliseDirection(fromEntries(entries, dir.legs.slice()))
+        }
+        return { ...route, dirs }
+      })
+
+      const overrides = { ...state.overrides }
+      delete overrides[other.id]
+      return { ...state, stops, routes, overrides }
+    }
+
+    // Undoes a manual link: every platform goes back to a separate stop,
+    // grouped by its own name (so two links made at different times split
+    // apart independently rather than all the way back to one-platform-each).
+    case 'unlinkStop': {
+      const stop = state.stops.find((s) => s.id === action.id)
+      if (!stop || !(stop.altNames || []).length) return state
+
+      const groups = new Map()
+      for (const platform of stop.platforms) {
+        const key = stopGroupKey(platform.name || stop.name)
+        if (!groups.has(key)) groups.set(key, [])
+        groups.get(key).push(platform)
+      }
+      if (groups.size <= 1) return state
+
+      const groupList = [...groups.values()]
+      const newStops = groupList.map((list, i) =>
+        i === 0 ? stopFromPlatforms(list, stop.id) : stopFromPlatforms(list),
+      )
+      const platformToStop = new Map()
+      for (const s of newStops) for (const p of s.platforms) platformToStop.set(p.id, s.id)
+
+      const stops = state.stops.filter((s) => s.id !== stop.id).concat(newStops)
+      const routes = state.routes.map((route) => {
+        const dirs = {}
+        for (const key of ['fwd', 'bwd']) {
+          const dir = route.dirs[key]
+          if (!dir) {
+            dirs[key] = dir
+            continue
+          }
+          const entries = dirEntries(dir).map((entry) => {
+            if (entry.stopId !== stop.id) return entry
+            return { stopId: platformToStop.get(entry.platformId) || newStops[0].id, platformId: entry.platformId }
+          })
+          dirs[key] = normaliseDirection(fromEntries(entries, dir.legs.slice()))
+        }
+        return { ...route, dirs }
+      })
+      const overrides = { ...state.overrides }
+      delete overrides[stop.id]
+      return { ...state, stops, routes, overrides }
     }
 
     case 'addRoute': {

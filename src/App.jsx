@@ -35,6 +35,7 @@ export default function App() {
   const [selectedRouteId, setSelectedRouteId] = useState(null)
   const [focus, setFocus] = useState(null)
   const [insertAt, setInsertAt] = useState(null)
+  const [linking, setLinking] = useState(null)
   const [basemap, setBasemap] = useState('light')
   const fileRef = useRef(null)
   const routing = useAutoRouting(project, dispatch)
@@ -49,6 +50,7 @@ export default function App() {
       if (e.key === 'Escape') {
         setEditing(null)
         setInsertAt(null)
+        setLinking(null)
         setTool('select')
       }
     }
@@ -61,6 +63,26 @@ export default function App() {
     dispatch({ type: 'setBbox', bbox })
     setTool('select')
   }, [])
+
+  useEffect(() => {
+    if (tool !== 'link') setLinking(null)
+  }, [tool])
+
+  // First click on a stop while the "link stops" tool is active picks the
+  // stop to keep; the second click picks the differently-named twin to fold
+  // into it (the Gibraltar case: same physical stop, different name per side).
+  const onLinkStop = useCallback(
+    (stopId) => {
+      setLinking((prev) => {
+        if (!prev) return { first: stopId }
+        if (prev.first === stopId) return prev
+        dispatch({ type: 'linkStops', keepId: prev.first, mergeId: stopId })
+        setTool('select')
+        return null
+      })
+    },
+    [dispatch],
+  )
 
   const exportProject = () => {
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' })
@@ -175,6 +197,10 @@ export default function App() {
                 setFocus={setFocus}
                 selectedStopId={selectedStopId}
                 onSelectStop={setSelectedStopId}
+                onRouteImported={(routeId) => {
+                  setTab('routes')
+                  setSelectedRouteId(routeId)
+                }}
               />
             )}
             {tab === 'routes' && (
@@ -222,7 +248,23 @@ export default function App() {
                 basemap={basemap}
                 insertAt={insertAt}
                 onInserted={() => setInsertAt(null)}
+                onLinkStop={onLinkStop}
               />
+              {tool === 'link' && (
+                <div className="editing-banner">
+                  {linking
+                    ? 'Now click the differently-named stop that is really the same place'
+                    : 'Click a stop, then click its differently-named twin on the other side'}
+                  <button
+                    onClick={() => {
+                      setLinking(null)
+                      setTool('select')
+                    }}
+                  >
+                    cancel
+                  </button>
+                </div>
+              )}
               {insertAt && (
                 <div className="editing-banner">
                   Click a stop to insert it at position <b>{insertAt.index + 1}</b>

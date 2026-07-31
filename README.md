@@ -42,6 +42,17 @@ JSON at any time.
 - **Merge duplicate stops** re-runs that grouping over stops already in the project — useful if you
   imported them before, or with merging switched off. Routes are rewired to the merged stops and
   keep the platform they were drawn through, so no geometry is lost.
+- **Link two stops** is the manual version, for names automatic grouping can't recognise as the
+  same place — the classic example is a stop with a completely different name on each side of the
+  road (Gibraltar has several). Click the tool, click one stop, then click its unrelated-looking
+  twin: they become one stop with both names (shown as `Name A ⇄ Name B`) and one marker on the
+  schematic. **✂** in the stop list splits a link back apart.
+- **Import a route from OpenStreetMap** takes a route relation's ID or its openstreetmap.org URL
+  — the same relation you reach by clicking a stop there and picking a route — and brings in its
+  stops plus its actual road/rail geometry (not a straight-line guess) as a ready-to-edit route.
+  A `route_master` relation brings in both directions at once. Any section whose OSM ways don't
+  chain together cleanly is left for the app's own routing to fill in, same as a section drawn by
+  hand — you'll see a note if that happens.
 - Stops can also be placed by hand, renamed inline, and deleted.
 
 ### 2. Routes
@@ -77,6 +88,9 @@ Switching to the schematic view generates the diagram automatically:
   defined, and the arrows appear on the sections whose *stops* differ (an extra stop on the
   return, say). A route drawn in one direction only, or one whose return simply takes different
   streets between the same stops, is drawn as a single plain line.
+- **Rotation** turns the whole diagram around its centre, in the Orientation section (a free
+  slider, or -90°/+90°/180° buttons). It's a display transform only — the layout underneath isn't
+  recomputed, so dragged stations and exports stay consistent at any angle.
 - Labels, route number badges at the termini, a legend, background colour and line casing are
   all adjustable, and any station can be dragged by hand; **Reset dragged stops** returns them to
   the solver.
@@ -98,9 +112,15 @@ kept when it lowers a weighted cost built from:
 - and how far an edge has drifted from its true geographic bearing.
 
 The solver runs in animation-frame slices with a progress readout, and stops early once no
-station wants to move. *Angle strictness* scales the angle term; *New variation* reshuffles the
-random order for a different result; manually dragged stations are pinned and the rest of the
-network is optimised around them.
+station wants to move. Every redraw actually runs the whole solve **three times** from different
+random shuffles (for networks up to about 150 stations) and keeps whichever attempt has the
+fewest line crossings — a single hill-climb can get stuck in a mediocre local optimum, and trying
+a few more nearly always finds a tidier result without you needing to click *New variation* by
+hand. A final pass also nudges stations that landed almost — but not quite — on the same row or
+column onto it exactly, which is a big part of what gives the finished map its rhythm. *Angle
+strictness* scales the angle term; *New variation* reshuffles the random order for a different
+result; manually dragged stations are pinned and the rest of the network is optimised around
+them.
 
 ## Layout of the code
 
@@ -108,7 +128,7 @@ network is optimised around them.
 | --- | --- |
 | `src/state/project.js` | The whole project document + reducer (stops, platforms, routes, settings) |
 | `src/lib/stopNames.js` | Name tidying that decides which platforms belong to the same stop |
-| `src/services/` | Overpass (stops), Nominatim (search), OSRM (road routing + cache) |
+| `src/services/` | Overpass (stops + routes), OSM route parsing, Nominatim (search), OSRM (routing + cache) |
 | `src/map/MapCanvas.jsx` | Leaflet map: bounding box, platform layer, route drawing, waypoint editing |
 | `src/schematic/graph.js` | Routes → network graph (nodes, shared edges, direction usage) |
 | `src/schematic/layout.js` | The angle-snapping layout solver |
@@ -119,8 +139,8 @@ network is optimised around them.
 
 ## Third-party services
 
-The app talks to public community services: **Overpass** for stop data, **Nominatim** for search,
-**OSRM's demo server** for road routing, and OSM/CARTO/Esri tiles. They are rate-limited and
-occasionally busy — when routing fails, the section falls back to a straight line and says so, and
-you can retry it with **↻**. Routed sections are cached locally so editing does not re-query the
-same geometry.
+The app talks to public community services: **Overpass** for stop data and route relations,
+**Nominatim** for search, **OSRM's demo server** for road routing, and OSM/CARTO/Esri tiles. They
+are rate-limited and occasionally busy — when routing fails, the section falls back to a straight
+line and says so, and you can retry it with **↻**. Routed sections are cached locally so editing
+does not re-query the same geometry.

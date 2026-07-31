@@ -2,6 +2,7 @@
 // schematic layout and renderer work with.
 
 import { projector } from '../lib/geo.js'
+import { displayStopName } from '../state/project.js'
 
 export function edgeKey(a, b) {
   return a < b ? `${a}|${b}` : `${b}|${a}`
@@ -33,7 +34,8 @@ export function buildNetworkGraph(project) {
     return {
       i,
       stopId: stop.id,
-      name: stop.name,
+      name: displayStopName(stop),
+      linked: (stop.altNames || []).length > 0,
       kind: stop.kind,
       gx: x,
       gy: -y, // screen space: y grows downwards

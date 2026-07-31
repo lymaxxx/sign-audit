@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Field, Section, Toggle } from './controls.jsx'
 import { searchPlaces } from '../services/nominatim.js'
 import { fetchStops, STOP_KINDS } from '../services/overpass.js'
+import { fetchOsmRoute } from '../services/osmRoute.js'
 import { haversine } from '../lib/geo.js'
 import { demoProject } from '../sample/demo.js'
 
@@ -13,6 +14,7 @@ export default function DataPanel({
   setFocus,
   selectedStopId,
   onSelectStop,
+  onRouteImported,
 }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -62,7 +64,9 @@ export default function DataPanel({
       kind: 'ok',
       text: project.lastImport.regrouped
         ? `Merged ${project.lastImport.merged} stop(s) into their twins — routes now share one marker per stop.`
-        : `Added ${project.lastImport.added} stops (${project.lastImport.merged} platforms folded into existing stops).`,
+        : project.lastImport.routeImported
+          ? `Route imported — ${project.lastImport.added} new stops, ${project.lastImport.merged} matched to ones already here.`
+          : `Added ${project.lastImport.added} stops (${project.lastImport.merged} platforms folded into existing stops).`,
     })
   }, [project.lastImport])
 
@@ -163,7 +167,21 @@ export default function DataPanel({
           >
             ⧉ Merge duplicate stops
           </button>
+          <button
+            className={tool === 'link' ? 'active' : ''}
+            onClick={() => setTool(tool === 'link' ? 'select' : 'link')}
+            disabled={project.stops.length < 2}
+            title="For stops that are the same place but keep a different name on each side — e.g. Gibraltar's two-name stops"
+          >
+            🔗 Link two stops
+          </button>
         </div>
+        {tool === 'link' && (
+          <p className="notice ok small">
+            Click a stop on the map, then click its differently-named twin. They'll become one
+            stop with both names (joined by ⇄) and one marker on the schematic.
+          </p>
+        )}
 
         <div className="button-row">
           <button
@@ -186,6 +204,8 @@ export default function DataPanel({
 
         {message && <p className={`notice ${message.kind}`}>{message.text}</p>}
       </Section>
+
+      <OsmRouteImport project={project} dispatch={dispatch} onRouteImported={onRouteImported} />
 
       <Section title={`Stops (${project.stops.length})`}>
         {!project.stops.length && (
@@ -234,7 +254,26 @@ export default function DataPanel({
                       }
                     />
                   ) : (
-                    <span className="name">{stop.name}</span>
+                    <span className="name">
+                      {stop.name}
+                      {(stop.altNames || []).map((n) => (
+                        <em key={n} className="alt-name">
+                          ⇄ {n}
+                        </em>
+                      ))}
+                    </span>
+                  )}
+                  {(stop.altNames || []).length > 0 && (
+                    <button
+                      className="icon"
+                      title="Split back into separate stops"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        dispatch({ type: 'unlinkStop', id: stop.id })
+                      }}
+                    >
+                      ✂
+                    </button>
                   )}
                   <button
                     className="icon"
@@ -256,5 +295,118 @@ export default function DataPanel({
         )}
       </Section>
     </>
+  )
+}
+
+function OsmRouteImport({ project, dispatch, onRouteImported }) {
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [preview, setPreview] = useState(null)
+  const [mergeRadius, setMergeRadius] = useState(30)
+  const abortRef = useRef(null)
+
+  const fetchPreview = async (e) => {
+    e.preventDefault()
+    if (!input.trim()) return
+    setLoading(true)
+    setError(null)
+    setPreview(null)
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    try {
+      const route = await fetchOsmRoute(input, { signal: controller.signal })
+      const legCount = (dirLegs) => dirLegs.filter((l) => !l.pending).length
+      setPreview({
+        route,
+        fwdRouted: legCount(route.fwd.legs),
+        fwdTotal: route.fwd.legs.length,
+        bwdRouted: route.bwd ? legCount(route.bwd.legs) : 0,
+        bwdTotal: route.bwd ? route.bwd.legs.length : 0,
+      })
+    } catch (err) {
+      if (err.name !== 'AbortError') setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (project.lastImport?.routeImported) onRouteImported?.(project.lastImport.routeImported)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.lastImport])
+
+  const addToProject = () => {
+    if (!preview) return
+    dispatch({ type: 'importOsmRoute', route: preview.route, mergeRadius })
+    setPreview(null)
+    setInput('')
+  }
+
+  return (
+    <Section title="Import a route from OpenStreetMap" defaultOpen={false}>
+      <p className="muted small">
+        Paste a route's relation ID or its openstreetmap.org URL — the same relation you'd get to
+        by clicking a stop there and picking a route. Both the stops and the road/rail geometry
+        come across; a route_master brings in both directions.
+      </p>
+      <form onSubmit={fetchPreview} className="search-form">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="123456 or https://www.openstreetmap.org/relation/123456"
+        />
+        <button type="submit" disabled={loading}>
+          {loading ? '…' : 'Fetch'}
+        </button>
+      </form>
+      <Field
+        label="Merge platforms within (m)"
+        hint="Same as the area import — folds a stop_position/platform pair or two close-together records into one stop."
+      >
+        <input
+          type="number"
+          min={0}
+          max={200}
+          value={mergeRadius}
+          onChange={(e) => setMergeRadius(Number(e.target.value))}
+        />
+      </Field>
+      {error && <p className="notice error small">{error}</p>}
+      {preview && (
+        <div className="notice ok small">
+          <p style={{ margin: 0 }}>
+            <b>
+              {preview.route.ref ? `${preview.route.ref} — ` : ''}
+              {preview.route.name || 'Unnamed route'}
+            </b>
+          </p>
+          <p style={{ margin: '4px 0' }}>
+            Outbound: {preview.route.fwd.stops.length} stops, {preview.fwdRouted}/{preview.fwdTotal}{' '}
+            sections with real OSM geometry
+            {preview.route.bwd && (
+              <>
+                <br />
+                Return: {preview.route.bwd.stops.length} stops, {preview.bwdRouted}/{preview.bwdTotal}{' '}
+                sections with real OSM geometry
+              </>
+            )}
+          </p>
+          {(preview.fwdTotal - preview.fwdRouted > 0 || preview.bwdTotal - preview.bwdRouted > 0) && (
+            <p style={{ margin: '4px 0' }}>
+              Sections without real geometry will be routed automatically once added, same as a
+              leg drawn by hand.
+            </p>
+          )}
+          <div className="button-row">
+            <button className="primary" onClick={addToProject}>
+              + Add to project
+            </button>
+            <button onClick={() => setPreview(null)}>Discard</button>
+          </div>
+        </div>
+      )}
+    </Section>
   )
 }
