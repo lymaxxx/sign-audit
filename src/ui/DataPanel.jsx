@@ -389,7 +389,9 @@ function OsmRouteImport({ project, dispatch, onRouteImported }) {
       {loading && (
         <p className="muted small">
           Fetching from OpenStreetMap… {elapsed}s{' '}
-          {elapsed > 8 ? '(long routes can take up to a minute — this is normal)' : ''}
+          {elapsed > 8
+            ? '(this is normal for a long route — a route_master fetches both directions as two rounds, so up to ~2-3 minutes on a slow day)'
+            : ''}
         </p>
       )}
       <Field

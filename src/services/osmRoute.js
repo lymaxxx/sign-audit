@@ -29,8 +29,13 @@ function isPlatformRole(role) {
   return PLATFORM_ROLES.some((r) => role === r || role.startsWith(`${r}:`))
 }
 
-async function fetchRelationElements(relId, opts) {
-  const query = `[out:json][timeout:60];relation(${relId});(._;>;);out geom;`
+// Accepts one ID or several — a route_master's two direction relations are
+// fetched together in a single request/mirror-race rather than one each, so
+// a slow query doesn't get paid for twice (or three times, counting the
+// initial lookup) in a row.
+async function fetchRelationElements(relIds, opts) {
+  const ids = (Array.isArray(relIds) ? relIds : [relIds]).join(',')
+  const query = `[out:json][timeout:60];relation(id:${ids});(._;>;);out geom;`
   const json = await queryOverpass(query, opts)
   return json.elements || []
 }
@@ -211,15 +216,23 @@ export async function fetchOsmRoute(input, opts = {}) {
     const childIds = (rel.members || []).filter((m) => m.type === 'relation').map((m) => m.ref)
     if (!childIds.length) throw new Error('This route_master has no route relations in it.')
     const kindOverride = kindOfRoute(rel.tags.route_master)
-    const first = await fetchOsmRoute(String(childIds[0]), { ...opts, kindOverride })
-    const second =
-      childIds.length > 1 ? await fetchOsmRoute(String(childIds[1]), { ...opts, kindOverride }) : null
+    // Both directions in one request rather than one each — the previous
+    // version fetched them as two fully separate round-trips (three,
+    // counting this master lookup), so a slow query paid its cost twice over.
+    const childElements = await fetchRelationElements(childIds, opts)
+    const childRoutes = childIds
+      .map((id) => childElements.find((e) => e.type === 'relation' && e.id === id))
+      .filter(Boolean)
+      .map((childRel) => buildFromRelation(childRel, childElements, { kindOverride }))
+    const [first, second] = childRoutes
+    if (!first) throw new Error('Could not read either direction of this route_master.')
     return {
       ref: rel.tags.ref || first.ref,
       name: rel.tags.name || first.name,
+      colour: first.colour,
       kind: first.kind,
-      fwd: first.fwd,
-      bwd: second ? second.fwd : null,
+      fwd: { stops: first.stops, legs: first.legs },
+      bwd: second ? { stops: second.stops, legs: second.legs } : null,
     }
   }
 
