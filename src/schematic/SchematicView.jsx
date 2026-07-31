@@ -307,6 +307,24 @@ export default function SchematicView({ project, dispatch, onSelectStop }) {
 function SchematicContent({ model, settings: s, hovered, onMarkerPointerDown, onMarkerHover }) {
   return (
     <>
+      {s.roads?.show && model.roads.length > 0 && (
+        <g className="roads">
+          {model.roads.map((r) => (
+            <line
+              key={r.key}
+              x1={r.a.x}
+              y1={r.a.y}
+              x2={r.b.x}
+              y2={r.b.y}
+              stroke={s.roads.color}
+              strokeWidth={s.roads.width}
+              strokeOpacity={s.roads.opacity}
+              strokeLinecap="round"
+            />
+          ))}
+        </g>
+      )}
+
       {s.casing && (
         <g className="casings">
           {model.routes.flatMap((route) =>
@@ -480,16 +498,14 @@ function StopMarker({ marker: m, settings: s, highlighted, ...handlers }) {
   let node = null
   if (!m.isInterchange && shape === 'none') node = null
   else if (!m.isInterchange && shape === 'tick') {
+    // A blunt stub from the stop out toward wherever its label ended up —
+    // not a hash mark crossing the line both ways — rotated relative to the
+    // outer (corridor-angle) group so it ends up pointing at the absolute
+    // tickAngle regardless of which way the corridor itself runs.
     node = (
-      <line
-        x1={0}
-        y1={-r}
-        x2={0}
-        y2={r}
-        stroke={stroke}
-        strokeWidth={cfg.strokeWidth}
-        strokeLinecap="round"
-      />
+      <g transform={`rotate(${(m.tickAngle ?? 0) - m.angle})`}>
+        <line x1={0} y1={0} x2={r * 2} y2={0} stroke={stroke} strokeWidth={cfg.strokeWidth} strokeLinecap="butt" />
+      </g>
     )
   } else if (shape === 'capsule') {
     const t = r * 0.75

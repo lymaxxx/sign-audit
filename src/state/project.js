@@ -71,6 +71,7 @@ export const defaultSchematic = {
     angle: 0,
     bold: 'interchange', // none | interchange | all
     maxChars: 28,
+    preferredSide: 'right', // right | left | above | below — default tick/label direction
   },
   arrows: {
     show: true,
@@ -80,6 +81,12 @@ export const defaultSchematic = {
   badges: {
     show: true,
     size: 13,
+  },
+  roads: {
+    show: false, // opt-in background layer, schematic-space only (not geography)
+    color: '#c9c9c9',
+    width: 4,
+    opacity: 0.6,
   },
 }
 

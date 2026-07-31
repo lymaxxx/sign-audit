@@ -2,14 +2,8 @@
 // parallel-offset line paths, stop markers, direction arrows, labels, badges.
 
 import { edgeDirectionality, routesWithBothDirections } from './graph.js'
-import {
-  arrowAnchors,
-  offsetPolyline,
-  rectsOverlap,
-  roundedPath,
-  textWidth,
-  unit,
-} from './geometry.js'
+import { arrowAnchors, offsetPolyline, roundedPath, textWidth, unit } from './geometry.js'
+import { buildRoadNetwork } from './roads.js'
 
 const DEG = 180 / Math.PI
 
@@ -175,10 +169,18 @@ export function buildSchematic(project, graph, positions, settings) {
     })
   }
 
-  const labels = s.labels.show ? placeLabels(markers, routes, s) : []
-  const bounds = computeBounds(markers, labels, routes, s)
+  // Label placement always runs (even with labels hidden) because the chosen
+  // side is also what points the stop tick marks — a station still needs a
+  // "toward the label" direction whether or not the text itself is drawn.
+  const labelPositions = placeLabels(markers, routes, s)
+  const tickAngleByStop = new Map(labelPositions.map((l) => [l.stopId, l.angle]))
+  for (const m of markers) m.tickAngle = tickAngleByStop.get(m.stopId) ?? PREFERRED_DIRECTIONS.right.angle
 
-  return { routes, markers, arrows, labels, bounds }
+  const labels = s.labels.show ? labelPositions : []
+  const bounds = computeBounds(markers, labels, routes, s)
+  const roads = s.roads?.show ? buildRoadNetwork(graph, positions, s.edgeLength) : []
+
+  return { routes, markers, arrows, labels, bounds, roads }
 }
 
 function averageAngle(angles) {
@@ -203,6 +205,16 @@ const LABEL_DIRECTIONS = [
   { dx: -0.7071, dy: -0.7071, anchor: 'end' },
   { dx: -0.7071, dy: 0.7071, anchor: 'end' },
 ]
+
+// One consistent default side, so most labels (and the tick marks that point
+// at them) end up facing the same way — a big part of a schematic's rhythm.
+// Only overridden per-station when that side is actually blocked.
+export const PREFERRED_DIRECTIONS = {
+  right: { dx: 1, dy: 0, angle: 0 },
+  left: { dx: -1, dy: 0, angle: 180 },
+  above: { dx: 0, dy: -1, angle: -90 },
+  below: { dx: 0, dy: 1, angle: 90 },
+}
 
 // Greedy label placement: important stops choose first, each label takes the
 // least-cluttered free slot around its marker.
@@ -229,6 +241,7 @@ function placeLabels(markers, routes, s) {
     }
   }
 
+  const preferred = PREFERRED_DIRECTIONS[s.labels?.preferredSide] || PREFERRED_DIRECTIONS.right
   const size = s.labels.size
   const placed = []
   const order = markers
@@ -246,7 +259,7 @@ function placeLabels(markers, routes, s) {
     const clearance =
       (m.isInterchange ? s.interchangeStop.size + m.span / 2 : s.regularStop.size) + 6
     let best = null
-    for (const push of [0, size * 1.1, size * 2.4]) {
+    for (const push of [0, size * 1.1, size * 2.4, size * 4]) {
       for (const dir of LABEL_DIRECTIONS) {
         const reach = clearance + push
         const cx = m.x + dir.dx * (reach + (dir.dx ? w / 2 : 0))
@@ -256,15 +269,22 @@ function placeLabels(markers, routes, s) {
         // penalise clashes with lines/markers
         for (let gx = rect.x; gx <= rect.x + rect.w; gx += cell) {
           for (let gy = rect.y; gy <= rect.y + rect.h; gy += cell) {
-            if (occupied.has(`${Math.round(gx / cell)},${Math.round(gy / cell)}`)) cost += 4
+            if (occupied.has(`${Math.round(gx / cell)},${Math.round(gy / cell)}`)) cost += 7
           }
         }
+        // overlapping another label is punished by how much it overlaps, so
+        // a graze costs little but a real collision is rejected outright
         for (const p of placed) {
-          if (rectsOverlap(rect, p.rect, 2)) cost += 60
+          const ox = Math.min(rect.x + rect.w, p.rect.x + p.rect.w) - Math.max(rect.x, p.rect.x)
+          const oy = Math.min(rect.y + rect.h, p.rect.y + p.rect.h) - Math.max(rect.y, p.rect.y)
+          if (ox > 0 && oy > 0) cost += 40 + (ox * oy) / cell
         }
         // prefer labels sitting off the side of the corridor
         const perp = Math.abs(Math.cos(((m.angle + 90) / DEG) - Math.atan2(dir.dy, dir.dx)))
         cost += (1 - perp) * 2.5
+        // bias toward one consistent side across the whole diagram — only
+        // lost when a real collision cost outweighs it
+        if (dir.dx === preferred.dx && dir.dy === preferred.dy) cost -= 0.8
         if (!best || cost < best.cost) {
           best = { cost, rect, dir, cx, cy, text }
         }
@@ -278,6 +298,7 @@ function placeLabels(markers, routes, s) {
       x: best.dir.dx === 0 ? m.x : best.cx - (best.dir.dx > 0 ? best.rect.w / 2 : -best.rect.w / 2),
       y: best.cy,
       anchor: best.dir.anchor,
+      angle: Math.atan2(best.dir.dy, best.dir.dx) * DEG,
       rect: best.rect,
       bold:
         s.labels.bold === 'all' || (s.labels.bold === 'interchange' && m.isInterchange),

@@ -66,10 +66,15 @@ export function Select({ label, value, options, onChange }) {
   )
 }
 
-export function Toggle({ label, checked, onChange }) {
+export function Toggle({ label, checked, onChange, disabled }) {
   return (
-    <label className="toggle">
-      <input type="checkbox" checked={!!checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className={`toggle${disabled ? ' disabled' : ''}`}>
+      <input
+        type="checkbox"
+        checked={!!checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
       <span>{label}</span>
     </label>
   )

@@ -1,4 +1,6 @@
 import { ColorInput, Section, Select, Slider, Toggle } from './controls.jsx'
+import { buildNetworkGraph } from '../schematic/graph.js'
+import { ROADS_MAX_NODES } from '../schematic/roads.js'
 
 const ANGLE_OPTIONS = [
   { value: '90', label: '90° — strict grid' },
@@ -16,6 +18,8 @@ function wrap180(deg) {
 export default function StylePanel({ project, dispatch }) {
   const s = project.schematic
   const set = (patch) => dispatch({ type: 'setSchematic', patch })
+  const nodeCount = buildNetworkGraph(project).nodes.length
+  const roadsTooBig = nodeCount > ROADS_MAX_NODES
 
   return (
     <>
@@ -221,6 +225,21 @@ export default function StylePanel({ project, dispatch }) {
 
       <Section title="Labels" defaultOpen={false}>
         <Toggle label="Show stop names" checked={s.labels.show} onChange={(v) => set({ labels: { show: v } })} />
+        <Select
+          label="Preferred side"
+          value={s.labels.preferredSide}
+          options={[
+            { value: 'right', label: 'Right' },
+            { value: 'left', label: 'Left' },
+            { value: 'above', label: 'Above' },
+            { value: 'below', label: 'Below' },
+          ]}
+          onChange={(v) => set({ labels: { preferredSide: v } })}
+        />
+        <p className="muted small">
+          Most labels (and the tick marks pointing at them) face this way — a station only breaks
+          from it when that side is genuinely blocked.
+        </p>
         <Slider
           label="Text size"
           value={s.labels.size}
@@ -299,6 +318,42 @@ export default function StylePanel({ project, dispatch }) {
           min={7}
           max={26}
           onChange={(v) => set({ legend: { size: v } })}
+        />
+      </Section>
+
+      <Section title="Background roads" defaultOpen={false}>
+        <Toggle
+          label="Show simplified roads"
+          checked={s.roads.show}
+          onChange={(v) => set({ roads: { show: v } })}
+          disabled={roadsTooBig}
+        />
+        <p className="muted small">
+          A pale backdrop generated purely from the diagram's own layout, not real geography — a
+          street between two corridors can be short simply because the layout happened to put them
+          close together.
+        </p>
+        {roadsTooBig && (
+          <p className="notice error small">
+            This network has {nodeCount} stops — roads are only generated up to {ROADS_MAX_NODES}
+            to keep redraws fast.
+          </p>
+        )}
+        <ColorInput label="Colour" value={s.roads.color} onChange={(v) => set({ roads: { color: v } })} />
+        <Slider
+          label="Width"
+          value={s.roads.width}
+          min={1}
+          max={14}
+          onChange={(v) => set({ roads: { width: v } })}
+        />
+        <Slider
+          label="Opacity"
+          value={s.roads.opacity}
+          min={0.1}
+          max={1}
+          step={0.05}
+          onChange={(v) => set({ roads: { opacity: v } })}
         />
       </Section>
     </>

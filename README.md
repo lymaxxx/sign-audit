@@ -91,6 +91,13 @@ Switching to the schematic view generates the diagram automatically:
 - **Rotation** turns the whole diagram around its centre, in the Orientation section (a free
   slider, or -90°/+90°/180° buttons). It's a display transform only — the layout underneath isn't
   recomputed, so dragged stations and exports stay consistent at any angle.
+- **Stop ticks** are a blunt (not rounded) stub that points from the line toward its label only,
+  not a hash mark crossing both ways — and every station prefers the same side by default
+  (Labels → Preferred side), breaking from it only where that side is genuinely blocked.
+- **Background roads** (off by default, Schematic style → Background roads) draw a pale backdrop
+  under the transit lines, generated purely from the diagram's own layout — not real geography. A
+  road between two corridors can be short simply because the layout happened to put them close
+  together; it's meant to read as city context, not a map.
 - Labels, route number badges at the termini, a legend, background colour and line casing are
   all adjustable, and any station can be dragged by hand; **Reset dragged stops** returns them to
   the solver.
@@ -116,8 +123,16 @@ station wants to move. Every redraw actually runs the whole solve **three times*
 random shuffles (for networks up to about 150 stations) and keeps whichever attempt has the
 fewest line crossings — a single hill-climb can get stuck in a mediocre local optimum, and trying
 a few more nearly always finds a tidier result without you needing to click *New variation* by
-hand. A final pass also nudges stations that landed almost — but not quite — on the same row or
-column onto it exactly, which is a big part of what gives the finished map its rhythm. *Angle
+hand. Two finishing passes tidy up what the per-station search alone can miss:
+
+- **Chain straightening** finds runs of stations that no other line branches from or joins at (the
+  same set of routes on both sides), and — only where the run already reads as basically straight,
+  never where that would cut a genuine corner — snaps it to a perfectly straight line with evenly
+  spaced stops, checking first that doing so won't collide with anything else nearby.
+- **Alignment snapping** nudges stations that landed almost — but not quite — on the same row or
+  column onto it exactly.
+
+Between the two, this is what gives the finished map its straight runs and rhythm. *Angle
 strictness* scales the angle term; *New variation* reshuffles the random order for a different
 result; manually dragged stations are pinned and the rest of the network is optimised around
 them.
@@ -131,8 +146,9 @@ them.
 | `src/services/` | Overpass (stops + routes), OSM route parsing, Nominatim (search), OSRM (routing + cache) |
 | `src/map/MapCanvas.jsx` | Leaflet map: bounding box, platform layer, route drawing, waypoint editing |
 | `src/schematic/graph.js` | Routes → network graph (nodes, shared edges, direction usage) |
-| `src/schematic/layout.js` | The angle-snapping layout solver |
+| `src/schematic/layout.js` | The angle-snapping layout solver, chain straightening, alignment snapping |
 | `src/schematic/build.js` | Parallel offsets, corners, markers, arrows, label placement |
+| `src/schematic/roads.js` | The optional schematic-space "background roads" layer |
 | `src/schematic/SchematicView.jsx` | SVG renderer, pan/zoom, station dragging, export |
 | `src/ui/` | Sidebar panels |
 | `src/sample/demo.js` | A small fictional network for trying things out offline |

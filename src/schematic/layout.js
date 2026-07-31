@@ -343,9 +343,113 @@ export function* layoutIterator(graph, options = {}) {
     if (moved === 0 && iter > 4) break
   }
 
+  straightenChains(graph, xs, ys, fixed, edgeLength)
   snapNearAlignedAxes(xs, ys, fixed, edgeLength * 0.05)
 
   return finalise(graph, xs, ys)
+}
+
+// A node with exactly two incident edges that both carry the same set of
+// routes is a genuine pass-through — nobody boards or alights there, so
+// nothing else in the network has a reason to care about its exact position.
+// The per-station hill-climb above can leave a long run of these a few
+// pixels off dead straight (each edge locally satisfies the angle grid, but
+// the run as a whole doesn't), which reads as a needless zigzag. This pass
+// finds maximal chains of such nodes and, only where the chain already reads
+// as straight, snaps it to a perfect straight line with evenly spaced stops —
+// never where that would cut a genuine corner or collide with anything else.
+export function straightenChains(graph, xs, ys, fixed, edgeLength) {
+  const n = xs.length
+  const adj = graph.adj
+
+  function sameRouteSet(a, b) {
+    if (a.length !== b.length) return false
+    const set = new Set(a)
+    return b.every((r) => set.has(r))
+  }
+  function isPassThrough(i) {
+    if (fixed[i]) return false
+    const inc = adj[i]
+    return inc.length === 2 && sameRouteSet(inc[0].edge.routeIds, inc[1].edge.routeIds)
+  }
+
+  // Walks from `start` away from `cameFrom`, returning [start, ..., boundary]
+  // (the boundary node itself, whatever stopped the walk, is included).
+  function walk(start, cameFrom) {
+    const path = [start]
+    const seen = new Set([cameFrom, start])
+    let prev = cameFrom
+    let cur = start
+    while (isPassThrough(cur)) {
+      const inc = adj[cur]
+      const next = inc[0].other === prev ? inc[1].other : inc[0].other
+      if (seen.has(next)) break // closed loop guard
+      seen.add(next)
+      path.push(next)
+      prev = cur
+      cur = next
+    }
+    return path
+  }
+
+  const visited = new Uint8Array(n)
+  for (let i = 0; i < n; i++) {
+    if (visited[i] || !isPassThrough(i)) continue
+    const inc = adj[i]
+    const sideA = walk(inc[0].other, i)
+    const sideB = walk(inc[1].other, i)
+    const chain = [...sideA.slice().reverse(), i, ...sideB]
+    for (const idx of chain) if (isPassThrough(idx)) visited[idx] = 1
+    if (chain.length < 3) continue
+
+    const A = chain[0]
+    const Z = chain[chain.length - 1]
+    if (A === Z) continue
+
+    let pathLen = 0
+    for (let k = 1; k < chain.length; k++) {
+      pathLen += Math.hypot(xs[chain[k]] - xs[chain[k - 1]], ys[chain[k]] - ys[chain[k - 1]])
+    }
+    const directLen = Math.hypot(xs[Z] - xs[A], ys[Z] - ys[A])
+    if (directLen < 1e-6 || pathLen / directLen > 1.08) continue // a real bend, leave it alone
+
+    const newPos = chain.map((_, k) => {
+      const t = k / (chain.length - 1)
+      return { x: xs[A] + (xs[Z] - xs[A]) * t, y: ys[A] + (ys[Z] - ys[A]) * t }
+    })
+
+    if (!chainPlacementIsSafe(graph, xs, ys, chain, newPos, edgeLength)) continue
+
+    for (let k = 1; k < chain.length - 1; k++) {
+      xs[chain[k]] = newPos[k].x
+      ys[chain[k]] = newPos[k].y
+    }
+  }
+}
+
+function chainPlacementIsSafe(graph, xs, ys, chain, newPos, edgeLength) {
+  const chainSet = new Set(chain)
+  const minDist = edgeLength * 0.7
+  for (let k = 1; k < chain.length - 1; k++) {
+    const p = newPos[k]
+    for (let j = 0; j < xs.length; j++) {
+      if (chainSet.has(j)) continue
+      if (Math.hypot(xs[j] - p.x, ys[j] - p.y) < minDist) return false
+    }
+  }
+  for (let k = 1; k < newPos.length; k++) {
+    const a = newPos[k - 1]
+    const b = newPos[k]
+    for (const edge of graph.edges) {
+      if (chainSet.has(edge.u) && chainSet.has(edge.v)) continue
+      if (
+        segmentsIntersect([a.x, a.y], [b.x, b.y], [xs[edge.u], ys[edge.u]], [xs[edge.v], ys[edge.v]])
+      ) {
+        return false
+      }
+    }
+  }
+  return true
 }
 
 // Stations the solver placed almost-but-not-quite on the same row or column
