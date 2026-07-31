@@ -8,46 +8,48 @@ export const ENDPOINTS = [
   'https://overpass.private.coffee/api/interpreter',
 ]
 
-// A mirror that never responds (no error, just silence — surprisingly common
-// with the free public Overpass instances) would otherwise hang the request
-// forever, since `fetch` has no timeout of its own. This aborts a single
-// attempt after `ms` while still honouring the caller's own abort signal.
-function withTimeout(externalSignal, ms) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), ms)
-  const onExternalAbort = () => controller.abort(externalSignal.reason)
-  externalSignal?.addEventListener('abort', onExternalAbort)
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      clearTimeout(timer)
-      externalSignal?.removeEventListener('abort', onExternalAbort)
-    },
-  }
-}
-
-// Posts an Overpass QL query, trying each mirror in turn. Shared by the stop
-// importer below and by the OSM route importer.
-export async function queryOverpass(query, { signal, timeoutMs = 25000 } = {}) {
+// Posts an Overpass QL query to every mirror at once and takes whichever
+// answers first — far better latency than trying them one at a time (a
+// route relation query can legitimately take 30-60s on a loaded public
+// instance, so waiting that long per mirror *in sequence* before even trying
+// the next one was the previous version's real bug). Everything else is
+// cancelled the moment one succeeds. Bounded by `timeoutMs`, which needs to
+// stay *above* the `[timeout:60]` the queries below declare to Overpass
+// itself — aborting on the client before the server's own declared budget is
+// up guarantees failure on anything that takes 30-60s, which real route
+// relations routinely do.
+export async function queryOverpass(query, { signal, timeoutMs = 75000 } = {}) {
   const body = new URLSearchParams({ data: query })
-  let lastError = null
-  for (const url of ENDPOINTS) {
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-    const attempt = withTimeout(signal, timeoutMs)
-    try {
-      const res = await fetch(url, { method: 'POST', body, signal: attempt.signal })
-      if (!res.ok) throw new Error(`Overpass replied ${res.status}`)
-      return await res.json()
-    } catch (err) {
-      if (signal?.aborted) throw err // the caller cancelled — don't keep trying mirrors
-      lastError = err.name === 'AbortError' || err.name === 'TimeoutError' ? new Error(`Timed out after ${timeoutMs / 1000}s`) : err
-    } finally {
-      attempt.cleanup()
-    }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), timeoutMs)
+  const onExternalAbort = () => controller.abort(signal.reason)
+  signal?.addEventListener('abort', onExternalAbort)
+
+  const attempt = async (url) => {
+    const res = await fetch(url, { method: 'POST', body, signal: controller.signal })
+    if (!res.ok) throw new Error(`Overpass replied ${res.status}`)
+    return res.json()
   }
-  throw new Error(
-    `Could not reach any Overpass server (${lastError ? lastError.message : 'unknown error'}). Try again in a moment.${networkHint()}`,
-  )
+
+  try {
+    const result = await Promise.any(ENDPOINTS.map(attempt))
+    controller.abort() // we have a winner — stop the other mirrors
+    return result
+  } catch (err) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    const timedOut = controller.signal.aborted && controller.signal.reason?.name === 'TimeoutError'
+    const detail = timedOut
+      ? `timed out after ${timeoutMs / 1000}s`
+      : err instanceof AggregateError
+        ? err.errors[err.errors.length - 1]?.message || 'unknown error'
+        : err.message
+    throw new Error(
+      `Could not reach any Overpass server (${detail}). Try again in a moment.${networkHint()}`,
+    )
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onExternalAbort)
+  }
 }
 
 export const STOP_KINDS = {
