@@ -78,6 +78,14 @@ export const defaultSchematic = {
     size: 9,
     spacing: 140,
   },
+  // Marks a stop a route only calls at in one direction. The line itself stays
+  // a single bidirectional stroke — only genuinely divergent branches split.
+  stopArrows: {
+    show: true,
+    size: 6,
+    color: '#333333',
+    useRouteColor: true,
+  },
   badges: {
     show: true,
     size: 13,

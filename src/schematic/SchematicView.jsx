@@ -550,8 +550,43 @@ function StopMarker({ marker: m, settings: s, highlighted, ...handlers }) {
       {highlighted && <circle r={r + 6} fill="none" stroke="#2b6cff" strokeWidth={2} opacity={0.8} />}
       <circle r={Math.max(r, 10)} fill="transparent" />
       {node}
+      {s.stopArrows.show && <ServiceArrows marker={m} settings={s} radius={r} />}
     </g>
   )
+}
+
+// A stop that a route only calls at in one direction keeps its place on the
+// single bidirectional line; the fact that it's served one way only shows up
+// here, as a small arrow beside the marker pointing the way the vehicle goes.
+function ServiceArrows({ marker: m, settings: s, radius }) {
+  const arrows = m.oneWayAnchors || []
+  if (!arrows.length) return null
+  const size = s.stopArrows.size
+  // Sit out along the tick, between the marker and its label. That direction
+  // is chosen to point away from the corridor, so unlike a plain perpendicular
+  // offset it can't land back on the line at a stop that falls on a corner —
+  // and the space is already kept clear for the label.
+  const reach = Math.max(radius * 2, radius + m.span / 2) + size * 1.3
+  return arrows.map((a, i) => {
+    const flip = a.serves === 'bwd' ? 180 : 0
+    const along = i * size * 2.2 // only matters when several routes are one-way here
+    return (
+      <g
+        key={`${a.routeId}-${i}`}
+        transform={`rotate(${(m.tickAngle ?? 0) - m.angle}) translate(${reach + along} 0) rotate(${
+          a.angle - (m.tickAngle ?? 0) + flip
+        })`}
+      >
+        <polygon
+          points={arrowPoints(size)}
+          fill={s.stopArrows.useRouteColor ? a.color || s.stopArrows.color : s.stopArrows.color}
+          stroke="#fff"
+          strokeWidth={1}
+          strokeLinejoin="round"
+        />
+      </g>
+    )
+  })
 }
 
 function arrowPoints(size) {

@@ -300,6 +300,19 @@ export default function StylePanel({ project, dispatch }) {
           onChange={(v) => set({ arrows: { spacing: v } })}
         />
         <Toggle
+          label="Arrows at one-direction-only stops"
+          checked={s.stopArrows.show}
+          onChange={(v) => set({ stopArrows: { show: v } })}
+          hint="A stop a route only calls at one way round keeps its place on the single bidirectional line; this arrow shows which way it's served."
+        />
+        <Slider
+          label="Stop arrow size"
+          value={s.stopArrows.size}
+          min={3}
+          max={14}
+          onChange={(v) => set({ stopArrows: { size: v } })}
+        />
+        <Toggle
           label="Route number badges at termini"
           checked={s.badges.show}
           onChange={(v) => set({ badges: { show: v } })}

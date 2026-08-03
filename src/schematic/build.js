@@ -1,7 +1,7 @@
 // Turns laid-out node positions into everything the SVG renderer draws:
 // parallel-offset line paths, stop markers, direction arrows, labels, badges.
 
-import { edgeDirectionality, routesWithBothDirections } from './graph.js'
+import { edgeDirectionality } from './graph.js'
 import { arrowAnchors, offsetPolyline, roundedPath, textWidth, unit } from './geometry.js'
 import { buildRoadNetwork } from './roads.js'
 
@@ -11,7 +11,6 @@ export function buildSchematic(project, graph, positions, settings) {
   const s = settings
   const gap = s.lineGap
   const routeOrder = new Map(project.routes.map((r, i) => [r.id, i]))
-  const bidirectional = routesWithBothDirections(project)
   const routeById = new Map(project.routes.map((r) => [r.id, r]))
 
   // Fixed slot per route on every shared corridor, so parallel lines keep the
@@ -42,19 +41,22 @@ export function buildSchematic(project, graph, positions, settings) {
     if (route.visible === false) continue
     const paths = []
     const badges = []
-    const fwd = route.dirs.fwd
-    const bwd = route.dirs.bwd
-    const sameBothWays =
-      bwd &&
-      bwd.stopIds.length === fwd.stopIds.length &&
-      bwd.stopIds.every((id, i) => id === fwd.stopIds[fwd.stopIds.length - 1 - i])
+    // One run for the shared corridor plus one per genuinely divergent
+    // branch — see mergeRouteDirections. A stop only one direction calls at
+    // stays on the corridor and gets an arrow on its marker instead.
+    const merged = graph.corridors?.get(route.id)
+    if (!merged) continue
+    const runs = [
+      ...merged.corridor.map((stopIds) => ({ stopIds, dirKey: 'fwd', branch: false })),
+      ...merged.branches.map((b) => ({ ...b, branch: true })),
+    ]
 
-    for (const dirKey of ['fwd', 'bwd']) {
-      const dir = route.dirs[dirKey]
-      if (!dir || dir.stopIds.length < 2) continue
-      if (dirKey === 'bwd' && sameBothWays) continue
+    for (let runIndex = 0; runIndex < runs.length; runIndex++) {
+      const run = runs[runIndex]
+      const dirKey = run.dirKey
+      if (run.stopIds.length < 2) continue
 
-      const seq = dir.stopIds
+      const seq = run.stopIds
         .map((id) => graph.index.get(id))
         .filter((v) => v !== undefined)
       const collapsed = seq.filter((v, i) => i === 0 || v !== seq[i - 1])
@@ -82,7 +84,8 @@ export function buildSchematic(project, graph, positions, settings) {
       paths.push({
         d: roundedPath(points, s.cornerRadius, s.cornerFullness),
         dirKey,
-        key: `${route.id}-${dirKey}`,
+        oneWay: run.branch,
+        key: `${route.id}-${dirKey}-${runIndex}`,
       })
 
       // remember where this route passes each of its stops
@@ -98,7 +101,16 @@ export function buildSchematic(project, graph, positions, settings) {
               (next ? next.x : points[i].x) - (next ? points[i].x : prev.x),
             ) * DEG
           : 0
-        stopAnchors.get(stopId).push({ routeId: route.id, x: points[i].x, y: points[i].y, angle })
+        stopAnchors.get(stopId).push({
+          routeId: route.id,
+          x: points[i].x,
+          y: points[i].y,
+          angle,
+          // 'fwd'/'bwd' here means "this route only calls here in that
+          // direction" — the marker draws a small arrow for it.
+          serves: run.branch ? 'both' : merged.serves.get(stopId) || 'both',
+          color: route.color,
+        })
       })
 
       // one-way sections get direction arrows
@@ -106,22 +118,28 @@ export function buildSchematic(project, graph, positions, settings) {
         for (let i = 0; i < collapsed.length - 1; i++) {
           const edge = segEdges[i]
           if (!edge) continue
-          const dirMode = edgeDirectionality(edge, route.id, bidirectional.has(route.id))
+          const dirMode = edgeDirectionality(edge, route.id)
           if (dirMode === 'both' || !dirMode) continue
           for (const anchor of arrowAnchors(points[i], points[i + 1], s.arrows.spacing)) {
-            arrows.push({ ...anchor, color: route.color, key: `${route.id}-${dirKey}-${i}-${anchor.x.toFixed(1)}` })
+            arrows.push({
+              ...anchor,
+              color: route.color,
+              key: `${route.id}-${runIndex}-${i}-${anchor.x.toFixed(1)}`,
+            })
           }
         }
       }
 
-      if (s.badges.show) {
+      // Only the corridor gets terminus badges — a divergent branch rejoins
+      // the line, it isn't where the route starts or finishes.
+      if (s.badges.show && !run.branch) {
         for (const end of [0, points.length - 1]) {
           const other = end === 0 ? points[1] : points[points.length - 2]
           const u = unit(other.x, other.y, points[end].x, points[end].y)
           badges.push({
             x: points[end].x + u.x * (s.badges.size * 1.6),
             y: points[end].y + u.y * (s.badges.size * 1.6),
-            key: `${route.id}-${dirKey}-${end}`,
+            key: `${route.id}-${runIndex}-${end}`,
           })
         }
       }
@@ -166,6 +184,9 @@ export function buildSchematic(project, graph, positions, settings) {
       span: Math.max(0, (routeCount - 1) * gap),
       terminus: node.degree === 1,
       anchors,
+      // Anchors whose route only calls here in one direction — each draws a
+      // small arrow beside the marker instead of splitting the line.
+      oneWayAnchors: anchors.filter((a) => a.serves && a.serves !== 'both'),
     })
   }
 
@@ -256,8 +277,16 @@ function placeLabels(markers, routes, s) {
     const text = truncate(m.name, s.labels.maxChars)
     const w = textWidth(text, size)
     const h = size * 1.15
+    // A one-direction-only arrow sits out along the tick, between marker and
+    // label, so the label has to start beyond it.
+    const arrowRoom =
+      s.stopArrows?.show && m.oneWayAnchors.length
+        ? s.stopArrows.size * (1.3 + 2.2 * (m.oneWayAnchors.length - 1)) + s.stopArrows.size
+        : 0
     const clearance =
-      (m.isInterchange ? s.interchangeStop.size + m.span / 2 : s.regularStop.size) + 6
+      (m.isInterchange ? s.interchangeStop.size + m.span / 2 : s.regularStop.size) +
+      6 +
+      arrowRoom
     let best = null
     for (const push of [0, size * 1.1, size * 2.4, size * 4]) {
       for (const dir of LABEL_DIRECTIONS) {
