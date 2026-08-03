@@ -4,6 +4,7 @@ import * as db from './db.js'
 import { newId } from '../util/id.js'
 import { preparePhoto } from '../util/image.js'
 import { downloadBlob, exportProject, importProjectFile, signsToCsv } from './persist.js'
+import { exportViewerHtml } from '../export/viewer.js'
 
 /**
  * Projects saved before signs had an editable side list stored photos under a
@@ -56,7 +57,24 @@ function migrateProject(project) {
     : project
 }
 
-const AUTOSAVE_DELAY = 400
+/**
+ * Prefer the crash-recovery journal when it describes the same project and is
+ * newer than what IndexedDB has.
+ *
+ * A stale journal — one left behind by a save that did land — is ignored on
+ * the `updatedAt` comparison rather than trusted blindly, so recovering can
+ * never roll an audit backwards.
+ */
+function recoverNewest(stored, recovered) {
+  if (!recovered || recovered.id !== stored?.id) return stored
+  return (recovered.updatedAt ?? 0) > (stored.updatedAt ?? 0) ? recovered : stored
+}
+
+// Short enough that the window where work exists only in memory is negligible,
+// long enough to coalesce a burst of keystrokes. Cheap because the project
+// record holds no blobs — the baked drawing, the original file and the photos
+// live in their own stores and are never rewritten by autosave.
+const AUTOSAVE_DELAY = 150
 
 const initialState = {
   status: 'loading', // loading | none | ready
@@ -184,10 +202,13 @@ export function StoreProvider({ children }) {
           dispatch({ type: 'none' })
           return
         }
-        const project = migrateProject(projects[0])
+        const project = migrateProject(recoverNewest(projects[0], db.readRecovery()))
         const plan = await db.getPlan(project.id)
         if (cancelled) return
-        lastSaved.current = project
+        // Deliberately not marked as already-saved: whatever came out of the
+        // journal still has to reach IndexedDB, and leaving it unsaved lets
+        // the autosave effect do exactly that on the next tick.
+        lastSaved.current = null
         dispatch({ type: 'loaded', project, plan: plan ?? null })
       } catch (error) {
         if (!cancelled) dispatch({ type: 'error', error: describe(error) })
@@ -206,9 +227,45 @@ export function StoreProvider({ children }) {
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
       lastSaved.current = project
-      db.putProject(project).catch((error) => dispatch({ type: 'error', error: describe(error) }))
+      db.putProject(project)
+        // The journal only exists to cover what autosave had not written yet.
+        .then(() => db.clearRecovery())
+        .catch((error) => dispatch({ type: 'error', error: describe(error) }))
     }, AUTOSAVE_DELAY)
     return () => clearTimeout(saveTimer.current)
+  }, [state.project, state.status])
+
+  /**
+   * Write immediately when the page is being hidden.
+   *
+   * The debounce above exists so typing a note does not hit the database on
+   * every keystroke, but it also means the last few hundred milliseconds of
+   * work are still only in memory. On a phone that is the exact moment the
+   * work is most likely to be lost: switching apps, locking the screen or
+   * pulling down the share sheet can all let iOS discard the page without
+   * warning, and there is no second chance to save afterwards. `pagehide` and
+   * the hidden `visibilitychange` are the last events guaranteed to run, so
+   * the pending write is flushed there rather than waited on.
+   */
+  useEffect(() => {
+    const flush = () => {
+      const project = state.project
+      if (state.status !== 'ready' || !project || project === lastSaved.current) return
+      // Synchronous on purpose. An IndexedDB write started here never
+      // completes — the browser discards the transaction as the page goes —
+      // so the unsaved state goes to the recovery journal instead, and the
+      // next start-up picks it up. See db.saveRecovery.
+      db.saveRecovery(project)
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [state.project, state.status])
 
   const actions = useMemo(() => {
@@ -218,7 +275,7 @@ export function StoreProvider({ children }) {
       dismissError: () => dispatch({ type: 'error', error: null }),
 
       /** Commit a freshly parsed drawing as a new project. */
-      async createProject({ name, plan, planFile, signs, hiddenBlocks, backdropLayers }) {
+      async createProject({ name, plan, planFile, signs, hiddenBlocks, backdropLayers, crop }) {
         dispatch({ type: 'busy', busy: 'Saving project…' })
         try {
           const id = newId('prj')
@@ -239,6 +296,9 @@ export function StoreProvider({ children }) {
             // Layers marked passive background (an XREF'd wall shell, say) —
             // drawn dimmed and without labels rather than as foreground content.
             backdropLayers: backdropLayers ?? [],
+            // The region of the drawing this audit covers, when the user
+            // narrowed it down at import. Null means the whole drawing.
+            crop: crop ?? null,
             signs,
           }
           const planRecord = {
@@ -408,6 +468,20 @@ export function StoreProvider({ children }) {
         const project = state.project
         const csv = signsToCsv(project.signs)
         downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${project.name}.csv`)
+      },
+
+      /** A read-only viewer for someone who does not have this app. */
+      async exportViewer() {
+        dispatch({ type: 'busy', busy: 'Building viewer…' })
+        try {
+          const project = state.project
+          const photos = await db.getPhotosForProject(project.id)
+          const { blob, fileName } = await exportViewerHtml(project, state.plan, photos)
+          downloadBlob(blob, fileName)
+          dispatch({ type: 'busy', busy: null })
+        } catch (error) {
+          fail(error)
+        }
       },
 
       async importProjectFile(file) {

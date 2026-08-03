@@ -91,6 +91,58 @@ export function putProject(project) {
   return run('projects', 'readwrite', (tx) => request(tx.objectStore('projects').put(project)))
 }
 
+/* ---------------------------------------------------------------- recovery */
+
+/**
+ * A crash-recovery journal for work that has not reached IndexedDB yet.
+ *
+ * Autosave is debounced, so the newest few hundred milliseconds of typing live
+ * only in memory. On a phone that is exactly when work is most at risk — an
+ * app switch, a screen lock or the share sheet can let iOS discard the page
+ * with no warning.
+ *
+ * IndexedDB cannot close that gap. Writes to it are asynchronous, and a
+ * transaction opened from `pagehide` is *discarded* rather than committed —
+ * verified in Chromium, where the transaction opens without error and the
+ * record is simply absent afterwards. localStorage is the one store that is
+ * synchronous, so it is the only one that can still be written at that point.
+ *
+ * So the journal holds the last project state as JSON, and `StoreProvider`
+ * prefers it on start-up when it is newer than what IndexedDB has. It is
+ * cleared as soon as a normal autosave lands, so it never resurrects state
+ * that has already been superseded.
+ */
+const RECOVERY_KEY = 'signage-audit:recovery'
+
+export function saveRecovery(project) {
+  if (!project) return false
+  try {
+    localStorage.setItem(RECOVERY_KEY, JSON.stringify(project))
+    return true
+  } catch {
+    // Out of quota, or storage blocked (Safari private browsing). The
+    // debounced autosave remains the primary path; this is only a safety net.
+    return false
+  }
+}
+
+export function readRecovery() {
+  try {
+    const raw = localStorage.getItem(RECOVERY_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+export function clearRecovery() {
+  try {
+    localStorage.removeItem(RECOVERY_KEY)
+  } catch {
+    // Nothing to do — a stale journal is superseded by updatedAt anyway.
+  }
+}
+
 export function deleteProject(id) {
   return run(['projects', 'plans', 'planFiles', 'photos'], 'readwrite', async (tx) => {
     tx.objectStore('projects').delete(id)
