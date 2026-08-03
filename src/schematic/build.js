@@ -3,7 +3,7 @@
 
 import { edgeDirectionality } from './graph.js'
 import { arrowAnchors, offsetPolyline, roundedPath, textWidth, unit } from './geometry.js'
-import { buildRoadNetwork } from './roads.js'
+import { buildStreetLayer, pickStreetLabels } from './roads.js'
 
 const DEG = 180 / Math.PI
 
@@ -199,9 +199,15 @@ export function buildSchematic(project, graph, positions, settings) {
 
   const labels = s.labels.show ? labelPositions : []
   const bounds = computeBounds(markers, labels, routes, s)
-  const roads = s.roads?.show ? buildRoadNetwork(graph, positions, s.edgeLength) : []
+  const roads = s.roads?.show
+    ? buildStreetLayer(project.streets, graph, positions, {
+        detail: s.roads.detail,
+        edgeLength: s.edgeLength,
+      })
+    : []
+  const roadLabels = s.roads?.showNames ? pickStreetLabels(roads, s.edgeLength * 1.1) : []
 
-  return { routes, markers, arrows, labels, bounds, roads }
+  return { routes, markers, arrows, labels, bounds, roads, roadLabels }
 }
 
 function averageAngle(angles) {

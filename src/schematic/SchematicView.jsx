@@ -310,18 +310,36 @@ function SchematicContent({ model, settings: s, hovered, onMarkerPointerDown, on
     <>
       {s.roads?.show && model.roads.length > 0 && (
         <g className="roads">
+          <defs>
+            {model.roadLabels.map((r) => (
+              <path key={`rp-${r.id}`} id={`street-${r.id}`} d={polylinePath(r.points)} fill="none" />
+            ))}
+          </defs>
           {model.roads.map((r) => (
-            <line
-              key={r.key}
-              x1={r.a.x}
-              y1={r.a.y}
-              x2={r.b.x}
-              y2={r.b.y}
+            <path
+              key={r.id}
+              d={polylinePath(r.points)}
+              fill="none"
               stroke={s.roads.color}
-              strokeWidth={s.roads.width}
+              // bigger roads a little heavier, so the pattern reads
+              strokeWidth={s.roads.width * (0.7 + r.rank * 0.3)}
               strokeOpacity={s.roads.opacity}
               strokeLinecap="round"
+              strokeLinejoin="round"
             />
+          ))}
+          {model.roadLabels.map((r) => (
+            <text
+              key={`rl-${r.id}`}
+              fill={s.roads.color}
+              fontSize={s.roads.nameSize}
+              fontFamily={s.labels.font}
+              opacity={Math.min(1, s.roads.opacity + 0.25)}
+            >
+              <textPath href={`#street-${r.id}`} startOffset="50%" textAnchor="middle">
+                {r.name}
+              </textPath>
+            </text>
           ))}
         </g>
       )}
@@ -335,7 +353,7 @@ function SchematicContent({ model, settings: s, hovered, onMarkerPointerDown, on
                 d={p.d}
                 fill="none"
                 stroke={s.background}
-                strokeWidth={s.lineWidth + s.casingWidth * 2}
+                strokeWidth={strokeWidthFor(p, s) + s.casingWidth * 2}
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -353,7 +371,7 @@ function SchematicContent({ model, settings: s, hovered, onMarkerPointerDown, on
               fill="none"
               stroke={route.color}
               strokeOpacity={s.lineOpacity}
-              strokeWidth={s.lineWidth}
+              strokeWidth={strokeWidthFor(p, s)}
               strokeLinecap="round"
               strokeLinejoin="round"
             />
@@ -367,9 +385,10 @@ function SchematicContent({ model, settings: s, hovered, onMarkerPointerDown, on
             <polygon
               key={a.key}
               points={arrowPoints(s.arrows.size)}
-              fill={s.background}
-              stroke={a.color}
+              fill={s.arrows.style === 'solid' ? a.color : s.background}
+              stroke={s.arrows.style === 'solid' ? s.background : a.color}
               strokeWidth={1}
+              strokeLinejoin="round"
               transform={`translate(${a.x} ${a.y}) rotate(${a.angle})`}
             />
           ))}
@@ -588,6 +607,16 @@ function ServiceArrows({ marker: m, settings: s, radius }) {
       </g>
     )
   })
+}
+
+function polylinePath(points) {
+  return points.map((p, i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
+}
+
+// A genuinely one-directional branch is drawn narrower than the trunk it
+// leaves, the way printed diagrams do it.
+function strokeWidthFor(path, s) {
+  return path.oneWay ? Math.max(1, s.lineWidth * (s.oneWayRatio ?? 1)) : s.lineWidth
 }
 
 function arrowPoints(size) {

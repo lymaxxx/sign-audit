@@ -1,6 +1,8 @@
 // Path geometry for the schematic renderer: parallel offsets for lines that
 // share a corridor, rounded / organic corners, and arrow placement.
 
+import { distToSegment2 } from '../lib/geo.js'
+
 // Centroid of a stopId -> {x,y} position map.
 export function centroidOfPositions(positions) {
   let cx = 0
@@ -151,6 +153,41 @@ export function arrowAnchors(a, b, spacing) {
     })
   }
   return anchors
+}
+
+// Douglas–Peucker: drops points that sit within `tolerance` of the straight
+// line spanning the run they're in, keeping the shape's character while losing
+// the surveyed detail. Iterative rather than recursive so a long street can't
+// blow the stack.
+export function simplifyPolyline(points, tolerance) {
+  const n = points.length
+  if (n < 3 || tolerance <= 0) return points.slice()
+  const keep = new Uint8Array(n)
+  keep[0] = 1
+  keep[n - 1] = 1
+  const stack = [[0, n - 1]]
+  const tol2 = tolerance * tolerance
+  while (stack.length) {
+    const [first, last] = stack.pop()
+    if (last - first < 2) continue
+    const a = points[first]
+    const b = points[last]
+    let worst = -1
+    let worstD = tol2
+    for (let i = first + 1; i < last; i++) {
+      const d = distToSegment2([points[i].x, points[i].y], [a.x, a.y], [b.x, b.y])
+      if (d > worstD) {
+        worstD = d
+        worst = i
+      }
+    }
+    if (worst === -1) continue
+    keep[worst] = 1
+    stack.push([first, worst], [worst, last])
+  }
+  const out = []
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(points[i])
+  return out
 }
 
 export function rectsOverlap(a, b, pad = 0) {

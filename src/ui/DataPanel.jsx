@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Field, Section, Toggle } from './controls.jsx'
 import { searchPlaces } from '../services/nominatim.js'
-import { fetchStops, STOP_KINDS } from '../services/overpass.js'
+import { fetchRoads, fetchStops, STOP_KINDS } from '../services/overpass.js'
 import { fetchOsmRoute, parseRelationRef } from '../services/osmRoute.js'
 import { haversine } from '../lib/geo.js'
 import { findOppositeKerbs, newId } from '../state/project.js'
@@ -28,6 +28,7 @@ export default function DataPanel({
   const [message, setMessage] = useState(null)
   const [filter, setFilter] = useState('')
   const [kerbRadius, setKerbRadius] = useState(130)
+  const [streetsLoading, setStreetsLoading] = useState(false)
   const abortRef = useRef(null)
 
   const kerbPairs = useMemo(() => findOppositeKerbs(project, kerbRadius), [project, kerbRadius])
@@ -61,6 +62,26 @@ export default function DataPanel({
       if (err.name !== 'AbortError') setMessage({ kind: 'error', text: err.message })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadStreets = async () => {
+    if (!project.bbox) return
+    setStreetsLoading(true)
+    setMessage(null)
+    try {
+      const streets = await fetchRoads(project.bbox)
+      dispatch({ type: 'setStreets', streets })
+      setMessage({
+        kind: 'ok',
+        text: streets.length
+          ? `Loaded ${streets.length} named street sections for the backdrop.`
+          : 'No named streets found in this area.',
+      })
+    } catch (err) {
+      if (err.name !== 'AbortError') setMessage({ kind: 'error', text: err.message })
+    } finally {
+      setStreetsLoading(false)
     }
   }
 
@@ -163,7 +184,20 @@ export default function DataPanel({
           <button className="primary" onClick={loadStops} disabled={!project.bbox || loading}>
             {loading ? 'Querying OpenStreetMap…' : '⇩ Load stops in area'}
           </button>
+          <button
+            onClick={loadStreets}
+            disabled={!project.bbox || streetsLoading}
+            title="Fetches the named streets in the box. The schematic warps them to follow the diagram, so they read as a pale backdrop behind the lines."
+          >
+            {streetsLoading ? 'Querying…' : '⇩ Load streets'}
+          </button>
         </div>
+        {project.streets?.length > 0 && (
+          <p className="muted small">
+            {project.streets.length} street sections loaded — turn the backdrop on under Schematic
+            style → Background streets.
+          </p>
+        )}
 
         <div className="button-row">
           <button

@@ -40,6 +40,9 @@ export const defaultSchematic = {
   seed: 1,
   rotation: 0, // display-only rotation in degrees, around the diagram centroid
   lineWidth: 8,
+  // Genuinely one-directional branches are drawn narrower than the trunk, the
+  // way printed diagrams do it, so the two read apart at a glance.
+  oneWayRatio: 0.55,
   lineGap: 9,
   cornerRadius: 22,
   cornerFullness: 0.55, // 0 = crisp arc, 1 = organic / squircle-like
@@ -82,6 +85,7 @@ export const defaultSchematic = {
     show: true,
     size: 9,
     spacing: 140,
+    style: 'solid', // solid | outline
   },
   // Marks a stop a route only calls at in one direction. The line itself stays
   // a single bidirectional stroke — only genuinely divergent branches split.
@@ -95,11 +99,16 @@ export const defaultSchematic = {
     show: true,
     size: 13,
   },
+  // Opt-in backdrop of the real street network, warped to follow the diagram.
+  // Needs streets loaded for the area first (see project.streets).
   roads: {
-    show: false, // opt-in background layer, schematic-space only (not geography)
+    show: false,
+    showNames: true,
     color: '#c9c9c9',
-    width: 4,
-    opacity: 0.6,
+    width: 3,
+    opacity: 0.55,
+    nameSize: 9,
+    detail: 0.5, // 0 = heavily simplified, 1 = close to the surveyed shape
   },
 }
 
@@ -110,6 +119,7 @@ export function emptyProject() {
     bbox: null,
     stops: [],
     routes: [],
+    streets: [], // real OSM street geometry for the backdrop layer
     schematic: { ...defaultSchematic },
     overrides: {}, // stopId -> [x, y] manual schematic positions
     mapView: { center: [52.52, 13.405], zoom: 13 },
@@ -441,6 +451,9 @@ export function projectReducer(state, action) {
 
     case 'setBbox':
       return { ...state, bbox: action.bbox }
+
+    case 'setStreets':
+      return { ...state, streets: action.streets }
 
     case 'setMapView':
       return { ...state, mapView: action.view }
@@ -945,6 +958,7 @@ export function migrate(raw) {
   const project = { ...base, ...raw }
   project.schematic = deepMerge(base.schematic, raw.schematic || {})
   project.overrides = raw.overrides || {}
+  project.streets = raw.streets || []
   project.stops = (raw.stops || []).map((stop) => {
     if (stop.platforms?.length) return stop
     // pre-platform projects: the stop itself becomes its only platform

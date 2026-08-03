@@ -106,6 +106,33 @@ export async function fetchStops(bbox, kinds, { signal } = {}) {
     })
 }
 
+// Named streets in the area, as real geometry. The schematic warps these into
+// diagram space rather than drawing them geographically (see schematic/roads.js)
+// — but they have to start out as the actual road network, or the backdrop is
+// just straight lines between stops, which is not what a street layer is for.
+const STREET_CLASSES = 'motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street'
+
+export async function fetchRoads(bbox, { signal, maxWays = 900 } = {}) {
+  const b = `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}`
+  const query =
+    `[out:json][timeout:60];` +
+    `way["highway"~"^(${STREET_CLASSES})$"]["name"](${b});` +
+    `out geom;`
+  const json = await queryOverpass(query, { signal })
+  const ways = []
+  for (const el of json.elements || []) {
+    if (el.type !== 'way' || !el.geometry?.length) continue
+    ways.push({
+      id: el.id,
+      name: el.tags?.name || '',
+      cls: el.tags?.highway || 'residential',
+      coords: el.geometry.map((g) => [g.lat, g.lon]),
+    })
+    if (ways.length >= maxWays) break
+  }
+  return ways
+}
+
 export function kindOfRoute(routeTag) {
   if (routeTag === 'tram' || routeTag === 'light_rail') return 'tram'
   if (routeTag === 'train' || routeTag === 'subway' || routeTag === 'monorail') return 'rail'

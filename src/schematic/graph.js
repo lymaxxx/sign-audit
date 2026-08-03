@@ -114,7 +114,21 @@ export function buildNetworkGraph(project) {
     nodes[i].isInterchange = nodes[i].routeIds.length > 1
   }
 
-  return { nodes, edges, adj, triples, index, corridors, empty: edges.length === 0 }
+  return {
+    nodes,
+    edges,
+    adj,
+    triples,
+    index,
+    corridors,
+    // Same projection the stops' gx/gy went through, so anything else
+    // geographic (the street backdrop) can be put in the same plane.
+    project: ([lat, lon]) => {
+      const [x, y] = proj.forward([lat, lon])
+      return { x, y: -y }
+    },
+    empty: edges.length === 0,
+  }
 }
 
 // Ordered route slots for an edge, so parallel lines keep a consistent side.

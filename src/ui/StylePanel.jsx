@@ -1,6 +1,4 @@
 import { ColorInput, Section, Select, Slider, Toggle } from './controls.jsx'
-import { buildNetworkGraph } from '../schematic/graph.js'
-import { ROADS_MAX_NODES } from '../schematic/roads.js'
 
 const ANGLE_OPTIONS = [
   { value: '90', label: '90° — strict grid' },
@@ -18,8 +16,7 @@ function wrap180(deg) {
 export default function StylePanel({ project, dispatch }) {
   const s = project.schematic
   const set = (patch) => dispatch({ type: 'setSchematic', patch })
-  const nodeCount = buildNetworkGraph(project).nodes.length
-  const roadsTooBig = nodeCount > ROADS_MAX_NODES
+  const hasStreets = (project.streets?.length ?? 0) > 0
 
   return (
     <>
@@ -93,6 +90,14 @@ export default function StylePanel({ project, dispatch }) {
 
       <Section title="Lines">
         <Slider label="Line width" value={s.lineWidth} min={2} max={24} onChange={(v) => set({ lineWidth: v })} />
+        <Slider
+          label="One-way branch width"
+          value={s.oneWayRatio}
+          min={0.2}
+          max={1}
+          step={0.05}
+          onChange={(v) => set({ oneWayRatio: v })}
+        />
         <Slider
           label="Gap between parallel lines"
           value={s.lineGap}
@@ -308,6 +313,15 @@ export default function StylePanel({ project, dispatch }) {
           step={10}
           onChange={(v) => set({ arrows: { spacing: v } })}
         />
+        <Select
+          label="Arrow style"
+          value={s.arrows.style}
+          options={[
+            { value: 'solid', label: 'Solid triangle' },
+            { value: 'outline', label: 'Outlined' },
+          ]}
+          onChange={(v) => set({ arrows: { style: v } })}
+        />
         <Toggle
           label="Arrows at one-direction-only stops"
           checked={s.stopArrows.show}
@@ -343,24 +357,39 @@ export default function StylePanel({ project, dispatch }) {
         />
       </Section>
 
-      <Section title="Background roads" defaultOpen={false}>
+      <Section title="Background streets" defaultOpen={false}>
         <Toggle
-          label="Show simplified roads"
+          label="Show streets behind the lines"
           checked={s.roads.show}
           onChange={(v) => set({ roads: { show: v } })}
-          disabled={roadsTooBig}
+          disabled={!hasStreets}
         />
-        <p className="muted small">
-          A pale backdrop generated purely from the diagram's own layout, not real geography — a
-          street between two corridors can be short simply because the layout happened to put them
-          close together.
-        </p>
-        {roadsTooBig && (
-          <p className="notice error small">
-            This network has {nodeCount} stops — roads are only generated up to {ROADS_MAX_NODES}
-            to keep redraws fast.
+        {hasStreets ? (
+          <p className="muted small">
+            The real street network, warped to follow the diagram — it bends where the diagram
+            bends near a stop and keeps its own shape in between, so it stays recognisable without
+            fighting the layout.
+          </p>
+        ) : (
+          <p className="notice small">
+            No streets loaded yet. Draw a bounding box on the map and use “⇩ Load streets” in Map
+            data.
           </p>
         )}
+        <Toggle
+          label="Street names"
+          checked={s.roads.showNames}
+          onChange={(v) => set({ roads: { showNames: v } })}
+          disabled={!hasStreets}
+        />
+        <Slider
+          label="Detail"
+          value={s.roads.detail}
+          min={0}
+          max={1}
+          step={0.05}
+          onChange={(v) => set({ roads: { detail: v } })}
+        />
         <ColorInput label="Colour" value={s.roads.color} onChange={(v) => set({ roads: { color: v } })} />
         <Slider
           label="Width"
@@ -368,6 +397,13 @@ export default function StylePanel({ project, dispatch }) {
           min={1}
           max={14}
           onChange={(v) => set({ roads: { width: v } })}
+        />
+        <Slider
+          label="Name size"
+          value={s.roads.nameSize}
+          min={5}
+          max={20}
+          onChange={(v) => set({ roads: { nameSize: v } })}
         />
         <Slider
           label="Opacity"
