@@ -8,6 +8,7 @@ import LayerToggle from './ui/LayerToggle.jsx'
 import OfflineNotice from './ui/OfflineNotice.jsx'
 import SignList, { Progress } from './ui/SignList.jsx'
 import SignPanel from './ui/SignPanel.jsx'
+import UnderlayPanel from './ui/UnderlayPanel.jsx'
 import { useStore } from './state/storeContext.js'
 import { STATUS_ORDER } from './util/status.js'
 import { SHEET_FRACTION, WIDE_QUERY, useMediaQuery } from './util/useMediaQuery.js'
@@ -41,13 +42,14 @@ function sortSigns(signs, sort) {
 }
 
 export default function App() {
-  const { status, project, plan, error, busy, actions } = useStore()
+  const { status, project, plan, underlay, error, busy, actions } = useStore()
   const viewport = useViewport()
   const wide = useMediaQuery(WIDE_QUERY)
 
   const [tab, setTab] = useState('plan')
   const [selectedId, setSelectedId] = useState(null)
   const [addMode, setAddMode] = useState(false)
+  const [alignMode, setAlignMode] = useState(false)
   const [sheet, setSheet] = useState(null)
   const [filters, setFilters] = useState(emptyFilters)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -194,6 +196,25 @@ export default function App() {
     if (!wide) viewport.centerOn(sign.x, sign.y, undefined, SHEET_FRACTION)
   }
 
+  // Aligning the background needs the plan itself free to receive the drag,
+  // so entering align mode closes whatever sheet is open (the Background
+  // panel included) rather than leaving it covering the plan; "Done aligning"
+  // in the toolbar below brings the panel back.
+  const startAligning = () => {
+    setSheet(null)
+    setAddMode(false)
+    setAlignMode(true)
+  }
+
+  const nudgeUnderlayScale = (factor) => {
+    const current = project.underlay?.transform.scale ?? 1
+    actions.updateUnderlayTransform({ scale: current * factor })
+  }
+  const nudgeUnderlayRotation = (delta) => {
+    const current = project.underlay?.transform.rotation ?? 0
+    actions.updateUnderlayTransform({ rotation: (((current + delta) % 360) + 360) % 360 })
+  }
+
   return (
     <div className="app">
       <header className="bar">
@@ -241,6 +262,17 @@ export default function App() {
                   }}
                 >
                   Layers
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSheet('background')
+                    setMenuOpen(false)
+                  }}
+                >
+                  Background
                 </button>
               </li>
               <li>
@@ -325,6 +357,10 @@ export default function App() {
             viewport={viewport}
             hiddenBlocks={project.hiddenBlocks}
             backdropLayers={project.backdropLayers}
+            underlay={underlay}
+            underlayMeta={project.underlay}
+            alignMode={alignMode}
+            onUnderlayDrag={actions.updateUnderlayTransform}
           />
 
           <div className="plan__tools">
@@ -343,13 +379,29 @@ export default function App() {
             <button type="button" onClick={() => viewport.zoomBy(1 / 1.6)} aria-label="Zoom out">
               −
             </button>
-            <button
-              type="button"
-              className={addMode ? 'is-on' : ''}
-              onClick={() => setAddMode((on) => !on)}
-            >
-              {addMode ? 'Tap the plan' : 'Add sign'}
-            </button>
+            {alignMode ? (
+              <button
+                type="button"
+                className="is-on"
+                onClick={() => {
+                  setAlignMode(false)
+                  setSheet('background')
+                }}
+              >
+                Done aligning
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={addMode ? 'is-on' : ''}
+                onClick={() => {
+                  setAddMode((on) => !on)
+                  setAlignMode(false)
+                }}
+              >
+                {addMode ? 'Tap the plan' : 'Add sign'}
+              </button>
+            )}
           </div>
 
           {visibleSigns.length !== signs.length && (
@@ -395,6 +447,23 @@ export default function App() {
               onSetShowLabels={actions.setShowLabels}
               backdropLayers={project.backdropLayers}
               onSetBackdrop={actions.setBackdropLayer}
+              onClose={() => setSheet(null)}
+            />
+          </div>
+        </div>
+      )}
+
+      {sheet === 'background' && (
+        <div className="overlay" onClick={() => setSheet(null)} role="presentation">
+          <div onClick={(event) => event.stopPropagation()} role="presentation">
+            <UnderlayPanel
+              underlayMeta={project.underlay}
+              onSetAlignMode={startAligning}
+              onAdd={actions.setUnderlay}
+              onRemove={actions.removeUnderlay}
+              onSetOpacity={actions.setUnderlayOpacity}
+              onNudgeScale={nudgeUnderlayScale}
+              onNudgeRotation={nudgeUnderlayRotation}
               onClose={() => setSheet(null)}
             />
           </div>

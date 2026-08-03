@@ -5,6 +5,8 @@ import { newId } from '../util/id.js'
 import { preparePhoto } from '../util/image.js'
 import { downloadBlob, exportProject, importProjectFile, signsToCsv } from './persist.js'
 import { exportViewerHtml } from '../export/viewer.js'
+import { renderPdfPage } from '../underlay/pdf.js'
+import { buildDxfUnderlay } from '../underlay/dxfUnderlay.js'
 
 /**
  * Projects saved before signs had an editable side list stored photos under a
@@ -58,6 +60,25 @@ function migrateProject(project) {
 }
 
 /**
+ * A starting position/scale for a freshly attached underlay, so it lands
+ * somewhere sane rather than at its own file's raw coordinate origin (which,
+ * for a PDF rendered in pixels, could be many thousand units away from a plan
+ * measured in metres).
+ *
+ * `x`/`y` are the world-space position of the underlay's own centre — see
+ * `underlayCentre` in `underlay/geometry.js` — so this only has to decide a
+ * centre and a scale, not a full placement.
+ */
+function guessUnderlayTransform(project, payload) {
+  const target = project?.crop ?? project?.bounds ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 }
+  const targetW = Math.max(target.maxX - target.minX, 1e-9)
+  const targetH = Math.max(target.maxY - target.minY, 1e-9)
+  const scale =
+    payload.kind === 'image' ? Math.max(targetW / payload.width, targetH / payload.height) || 1 : 1
+  return { x: (target.minX + target.maxX) / 2, y: (target.minY + target.maxY) / 2, scale, rotation: 0 }
+}
+
+/**
  * Prefer the crash-recovery journal when it describes the same project and is
  * newer than what IndexedDB has.
  *
@@ -80,6 +101,10 @@ const initialState = {
   status: 'loading', // loading | none | ready
   project: null,
   plan: null,
+  // The heavy underlay payload (an image blob or a second drawing's baked
+  // geometry) — kept apart from `project.underlay`, which is just its
+  // position/opacity, the same split as `plan` vs. `project.bounds`.
+  underlay: null,
   error: null,
   busy: null,
 }
@@ -106,6 +131,7 @@ function reducer(state, action) {
         status: 'ready',
         project: action.project,
         plan: action.plan,
+        underlay: action.underlay ?? null,
         error: null,
         busy: null,
       }
@@ -179,6 +205,47 @@ function reducer(state, action) {
         },
       }
 
+    case 'setUnderlay':
+      if (!state.project) return state
+      return {
+        ...state,
+        project: { ...state.project, underlay: action.meta, updatedAt: Date.now() },
+        underlay: action.payload,
+      }
+
+    case 'removeUnderlay':
+      if (!state.project) return state
+      return {
+        ...state,
+        project: { ...state.project, underlay: null, updatedAt: Date.now() },
+        underlay: null,
+      }
+
+    case 'updateUnderlayMeta':
+      if (!state.project?.underlay) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          underlay: { ...state.project.underlay, ...action.patch },
+          updatedAt: Date.now(),
+        },
+      }
+
+    case 'updateUnderlayTransform':
+      if (!state.project?.underlay) return state
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          underlay: {
+            ...state.project.underlay,
+            transform: { ...state.project.underlay.transform, ...action.patch },
+          },
+          updatedAt: Date.now(),
+        },
+      }
+
     default:
       return state
   }
@@ -203,13 +270,13 @@ export function StoreProvider({ children }) {
           return
         }
         const project = migrateProject(recoverNewest(projects[0], db.readRecovery()))
-        const plan = await db.getPlan(project.id)
+        const [plan, underlay] = await Promise.all([db.getPlan(project.id), db.getUnderlay(project.id)])
         if (cancelled) return
         // Deliberately not marked as already-saved: whatever came out of the
         // journal still has to reach IndexedDB, and leaving it unsaved lets
         // the autosave effect do exactly that on the next tick.
         lastSaved.current = null
-        dispatch({ type: 'loaded', project, plan: plan ?? null })
+        dispatch({ type: 'loaded', project, plan: plan ?? null, underlay: underlay ?? null })
       } catch (error) {
         if (!cancelled) dispatch({ type: 'error', error: describe(error) })
       }
@@ -328,9 +395,9 @@ export function StoreProvider({ children }) {
             dispatch({ type: 'none' })
             return
           }
-          const plan = await db.getPlan(id)
+          const [plan, underlay] = await Promise.all([db.getPlan(id), db.getUnderlay(id)])
           lastSaved.current = project
-          dispatch({ type: 'loaded', project, plan: plan ?? null })
+          dispatch({ type: 'loaded', project, plan: plan ?? null, underlay: underlay ?? null })
         } catch (error) {
           fail(error)
         }
@@ -346,9 +413,9 @@ export function StoreProvider({ children }) {
             return
           }
           const project = migrateProject(remaining[0])
-          const plan = await db.getPlan(project.id)
+          const [plan, underlay] = await Promise.all([db.getPlan(project.id), db.getUnderlay(project.id)])
           lastSaved.current = project
-          dispatch({ type: 'loaded', project, plan: plan ?? null })
+          dispatch({ type: 'loaded', project, plan: plan ?? null, underlay: underlay ?? null })
         } catch (error) {
           fail(error)
         }
@@ -361,6 +428,36 @@ export function StoreProvider({ children }) {
       setShowLabels: (showLabels) => dispatch({ type: 'project', patch: { showLabels } }),
       setLayerVisible: (name, visible) => dispatch({ type: 'setLayerVisible', name, visible }),
       setBackdropLayer: (name, on) => dispatch({ type: 'setBackdropLayer', name, on }),
+
+      /**
+       * Attach a PDF page or a second DXF as a background reference behind
+       * the plan. `type` is 'pdf' or 'dxf'; `pageNumber` is only meaningful
+       * for a PDF and defaults to its first page.
+       */
+      async setUnderlay({ file, type, pageNumber = 1 }) {
+        dispatch({ type: 'busy', busy: type === 'pdf' ? 'Rendering page…' : 'Reading drawing…' })
+        try {
+          const project = state.project
+          const payload =
+            type === 'pdf'
+              ? { id: project.id, kind: 'image', ...(await renderPdfPage(file, pageNumber)) }
+              : { id: project.id, kind: 'dxf', ...buildDxfUnderlay(await file.text()) }
+          await db.putUnderlay(payload)
+          const meta = { type, opacity: 0.6, transform: guessUnderlayTransform(project, payload) }
+          dispatch({ type: 'setUnderlay', meta, payload })
+          dispatch({ type: 'busy', busy: null })
+        } catch (error) {
+          fail(error)
+        }
+      },
+
+      async removeUnderlay() {
+        await db.deleteUnderlay(state.project.id).catch(() => {})
+        dispatch({ type: 'removeUnderlay' })
+      },
+
+      setUnderlayOpacity: (opacity) => dispatch({ type: 'updateUnderlayMeta', patch: { opacity } }),
+      updateUnderlayTransform: (patch) => dispatch({ type: 'updateUnderlayTransform', patch }),
 
       updateSign: (id, patch) => dispatch({ type: 'updateSign', id, patch }),
 

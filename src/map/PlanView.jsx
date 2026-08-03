@@ -2,6 +2,7 @@ import { memo, useEffect, useId, useRef, useState } from 'react'
 import SignMarkers from './SignMarkers.jsx'
 import { visibleBounds } from './useViewport.js'
 import { normaliseBox } from '../dxf/crop.js'
+import { underlayMatrixString } from '../underlay/geometry.js'
 
 /**
  * The plan canvas: baked CAD geometry, optional text, and sign markers.
@@ -98,6 +99,77 @@ const Labels = memo(function Labels({ labels, view, size, hiddenKey, hiddenBlock
   )
 })
 
+/**
+ * A reference image or drawing placed behind the plan — a PDF plot rasterised
+ * to a page, or a second DXF's baked geometry. It is never interactive: only
+ * the dial of controls in the panel above the plan, plus dragging in align
+ * mode (handled by the parent, since that has to steal the pan gesture),
+ * change how it sits.
+ */
+const Underlay = memo(function Underlay({ underlay, meta, imageUrl, showOutline }) {
+  if (!underlay || !meta) return null
+  const matrix = underlayMatrixString(meta.transform, underlay)
+  const box =
+    underlay.kind === 'image'
+      ? { minX: 0, minY: 0, maxX: underlay.width, maxY: underlay.height }
+      : underlay.bounds
+
+  return (
+    <>
+      <g transform={matrix} opacity={meta.opacity} style={{ pointerEvents: 'none' }}>
+        {underlay.kind === 'image' ? (
+          imageUrl && (
+            <image href={imageUrl} x={0} y={0} width={underlay.width} height={underlay.height} />
+          )
+        ) : (
+          <>
+            <g strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+              {underlay.paths.map((path, index) =>
+                path.filled ? (
+                  <path key={index} d={path.d} fill={path.color} fillRule="evenodd" stroke="none" />
+                ) : (
+                  <path
+                    key={index}
+                    d={path.d}
+                    fill="none"
+                    stroke={path.color}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ),
+              )}
+            </g>
+            {underlay.labels?.map((label, index) => (
+              <text
+                key={index}
+                transform={`translate(${label.x} ${label.y}) scale(1 -1) rotate(${-label.angle})`}
+                fontSize={label.size}
+                fill={label.color}
+              >
+                {label.text}
+              </text>
+            ))}
+          </>
+        )}
+      </g>
+      {showOutline && (
+        <g transform={matrix} style={{ pointerEvents: 'none' }}>
+          <rect
+            x={box.minX}
+            y={box.minY}
+            width={box.maxX - box.minX}
+            height={box.maxY - box.minY}
+            fill="none"
+            stroke="var(--accent)"
+            strokeWidth={2}
+            strokeDasharray="8 5"
+            vectorEffect="non-scaling-stroke"
+          />
+        </g>
+      )}
+    </>
+  )
+})
+
 export default function PlanView({
   plan,
   project,
@@ -111,6 +183,10 @@ export default function PlanView({
   backdropLayers,
   cropMode,
   onCropDrawn,
+  underlay,
+  underlayMeta,
+  alignMode,
+  onUnderlayDrag,
 }) {
   const { containerRef, size, view, transform, handlers, toWorld, fitTo, wasDrag } = viewport
   const fittedFor = useRef(null)
@@ -119,6 +195,23 @@ export default function PlanView({
   // rather than a ref so the outline follows the finger as it moves.
   const [dragBox, setDragBox] = useState(null)
   const dragStart = useRef(null)
+  const alignStart = useRef(null)
+
+  // The underlay's raster image only ever exists as a Blob in storage; an
+  // object URL is what an <image> element can actually point at. Created only
+  // when the underlying Blob reference changes, not on every render, and
+  // revoked on the way out so a session that swaps through several PDFs does
+  // not leak one URL per attempt.
+  const [imageUrl, setImageUrl] = useState(null)
+  useEffect(() => {
+    if (underlay?.kind !== 'image') {
+      setImageUrl(null)
+      return
+    }
+    const url = URL.createObjectURL(underlay.blob)
+    setImageUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [underlay])
 
   // Fit the drawing the first time we know both the plan and the viewport size.
   useEffect(() => {
@@ -141,9 +234,10 @@ export default function PlanView({
   // slightly smaller drawing.
   const crop = project?.crop ?? null
 
-  // While drawing a crop box the pan/zoom gestures have to stand down, or the
-  // drag would pan the plan out from under the rectangle being drawn.
-  const cropHandlers = cropMode
+  // While drawing a crop box, or dragging the underlay into place, the pan/
+  // zoom gestures have to stand down — otherwise the same drag would also pan
+  // the plan out from under whatever is being positioned.
+  const activeHandlers = cropMode
     ? {
         onPointerDown(event) {
           event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -167,15 +261,38 @@ export default function PlanView({
           setDragBox(null)
         },
       }
-    : handlers
+    : alignMode && underlayMeta
+      ? {
+          onPointerDown(event) {
+            event.currentTarget.setPointerCapture?.(event.pointerId)
+            alignStart.current = {
+              start: toWorld(event.clientX, event.clientY),
+              x0: underlayMeta.transform.x,
+              y0: underlayMeta.transform.y,
+            }
+          },
+          onPointerMove(event) {
+            if (!alignStart.current) return
+            const { start, x0, y0 } = alignStart.current
+            const point = toWorld(event.clientX, event.clientY)
+            onUnderlayDrag?.({ x: x0 + (point.x - start.x), y: y0 + (point.y - start.y) })
+          },
+          onPointerUp() {
+            alignStart.current = null
+          },
+          onPointerCancel() {
+            alignStart.current = null
+          },
+        }
+      : handlers
 
   const outline = dragBox ?? null
 
   return (
     <div
       ref={containerRef}
-      className={`plan ${addMode ? 'plan--adding' : ''} ${cropMode ? 'plan--cropping' : ''}`}
-      {...cropHandlers}
+      className={`plan ${addMode ? 'plan--adding' : ''} ${cropMode ? 'plan--cropping' : ''} ${alignMode ? 'plan--aligning' : ''}`}
+      {...activeHandlers}
       onClick={(event) => {
         if (!addMode || wasDrag()) return
         const point = toWorld(event.clientX, event.clientY)
@@ -196,6 +313,7 @@ export default function PlanView({
           </defs>
         )}
         <g transform={transform}>
+          <Underlay underlay={underlay} meta={underlayMeta} imageUrl={imageUrl} showOutline={alignMode} />
           <g clipPath={crop ? `url(#${clipId})` : undefined}>
             {plan?.paths?.length ? (
               <LayerPaths

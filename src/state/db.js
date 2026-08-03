@@ -10,7 +10,11 @@
  */
 
 const DB_NAME = 'signage-audit'
-const DB_VERSION = 1
+// v2 added `underlays`: a reference image or drawing placed behind the plan,
+// stored separately from `plans` for the same reason plan and photos are
+// split apart — its payload (a raster image or a second drawing's geometry)
+// is heavy and irrelevant to every read that does not need it.
+const DB_VERSION = 2
 
 let dbPromise = null
 
@@ -32,6 +36,9 @@ function open() {
       if (!db.objectStoreNames.contains('photos')) {
         const store = db.createObjectStore('photos', { keyPath: 'id' })
         store.createIndex('projectId', 'projectId')
+      }
+      if (!db.objectStoreNames.contains('underlays')) {
+        db.createObjectStore('underlays', { keyPath: 'id' })
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -144,10 +151,11 @@ export function clearRecovery() {
 }
 
 export function deleteProject(id) {
-  return run(['projects', 'plans', 'planFiles', 'photos'], 'readwrite', async (tx) => {
+  return run(['projects', 'plans', 'planFiles', 'photos', 'underlays'], 'readwrite', async (tx) => {
     tx.objectStore('projects').delete(id)
     tx.objectStore('plans').delete(id)
     tx.objectStore('planFiles').delete(id)
+    tx.objectStore('underlays').delete(id)
     const photos = tx.objectStore('photos')
     const keys = await request(photos.index('projectId').getAllKeys(id))
     for (const key of keys) photos.delete(key)
@@ -170,6 +178,20 @@ export function getPlanFile(id) {
 
 export function putPlanFile(id, blob) {
   return run('planFiles', 'readwrite', (tx) => request(tx.objectStore('planFiles').put({ id, blob })))
+}
+
+/* ---------------------------------------------------------------- underlay */
+
+export function getUnderlay(id) {
+  return run('underlays', 'readonly', (tx) => request(tx.objectStore('underlays').get(id)))
+}
+
+export function putUnderlay(record) {
+  return run('underlays', 'readwrite', (tx) => request(tx.objectStore('underlays').put(record)))
+}
+
+export function deleteUnderlay(id) {
+  return run('underlays', 'readwrite', (tx) => request(tx.objectStore('underlays').delete(id)))
 }
 
 /* ------------------------------------------------------------------ photos */
