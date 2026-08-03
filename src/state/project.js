@@ -32,6 +32,10 @@ export const defaultSchematic = {
   iterations: 40,
   edgeLength: 92,
   strictness: 2.2,
+  // How hard the solver tries to keep each edge pointing the way it does in
+  // reality. Low values schematise harder; the diagram is the priority, so the
+  // default is well below the old hard-coded 1.4.
+  fidelity: 0.5,
   seed: 1,
   rotation: 0, // display-only rotation in degrees, around the diagram centroid
   lineWidth: 8,

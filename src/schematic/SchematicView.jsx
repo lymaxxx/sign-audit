@@ -12,7 +12,7 @@ function useSchematicLayout(project, nonce) {
   const [progress, setProgress] = useState(null)
   const s = project.schematic
 
-  const layoutKey = `${nonce}|${s.angleStep}|${s.iterations}|${s.edgeLength}|${s.strictness}|${s.seed}`
+  const layoutKey = `${nonce}|${s.angleStep}|${s.iterations}|${s.edgeLength}|${s.strictness}|${s.fidelity}|${s.seed}`
 
   useEffect(() => {
     if (graph.empty) {
@@ -26,6 +26,7 @@ function useSchematicLayout(project, nonce) {
       iterations: s.iterations,
       edgeLength: s.edgeLength,
       strictness: s.strictness,
+      fidelity: s.fidelity,
       seed: s.seed,
       overrides: project.overrides,
     })

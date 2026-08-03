@@ -46,6 +46,14 @@ export default function StylePanel({ project, dispatch }) {
           onChange={(v) => set({ strictness: v })}
         />
         <Slider
+          label="Geographic fidelity"
+          value={s.fidelity}
+          min={0}
+          max={2}
+          step={0.1}
+          onChange={(v) => set({ fidelity: v })}
+        />
+        <Slider
           label="Solver passes"
           value={s.iterations}
           min={5}
@@ -53,8 +61,9 @@ export default function StylePanel({ project, dispatch }) {
           onChange={(v) => set({ iterations: v })}
         />
         <p className="muted small">
-          Higher strictness snaps harder to the chosen angles; more passes tidy the map further but
-          take longer.
+          Higher strictness snaps harder to the chosen angles. Lower fidelity lets the diagram
+          depart further from the real bearings, which usually makes it tidier. More passes tidy
+          the map further but take longer.
         </p>
       </Section>
 
