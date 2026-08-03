@@ -154,7 +154,7 @@ export function* layoutIterator(graph, options = {}) {
   const minNodeEdge = edgeLength * 0.55
   const W = {
     angle: 4 * strictness,
-    length: 1.1,
+    length: 4,
     // a coarse angle grid needs more freedom to move away from true bearings
     relative: fidelity * Math.min(1, 45 / angleStep),
     // Straightness has to be able to outweigh the angle grid, not sit 20x

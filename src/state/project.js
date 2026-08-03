@@ -3,6 +3,7 @@
 
 import { haversine } from '../lib/geo.js'
 import { baseStopName, platformQualifier, stopGroupKey } from '../lib/stopNames.js'
+import { mergeRouteDirections } from '../lib/routeMerge.js'
 
 export const PALETTE = [
   '#e4002b',
@@ -591,54 +592,28 @@ export function projectReducer(state, action) {
     // this is for names that are simply unrelated. `keepId` keeps its
     // identity (and any of its own alt names); `mergeId`'s name is folded in
     // as an alt name rather than discarded, and its platforms join keepId's.
-    case 'linkStops': {
-      const keep = state.stops.find((s) => s.id === action.keepId)
-      const other = state.stops.find((s) => s.id === action.mergeId)
-      if (!keep || !other || keep.id === other.id) return state
+    case 'linkStops':
+      return linkTwoStops(state, action.keepId, action.mergeId)
 
-      const platforms = [...keep.platforms, ...other.platforms]
-      const lat = platforms.reduce((sum, p) => sum + p.lat, 0) / platforms.length
-      const lon = platforms.reduce((sum, p) => sum + p.lon, 0) / platforms.length
-      const altNames = dedupeNames(
-        [...(keep.altNames || []), other.name, ...(other.altNames || [])],
-        keep.name,
-      )
-      const merged = { ...keep, lat, lon, platforms, altNames }
-
-      const stops = state.stops.filter((s) => s.id !== other.id).map((s) => (s.id === keep.id ? merged : s))
-
-      // A `null` platformId meant "this stop's own (usually only) platform" —
-      // fine before the merge, but the merged stop's centre is now a midpoint
-      // between two platforms, so every existing call has to be pinned to the
-      // platform it actually meant, or routes would silently jump to that
-      // midpoint.
-      const keepDefault = keep.platforms[0]?.id ?? null
-      const otherDefault = other.platforms[0]?.id ?? null
-      const routes = state.routes.map((route) => {
-        const dirs = {}
-        for (const key of ['fwd', 'bwd']) {
-          const dir = route.dirs[key]
-          if (!dir) {
-            dirs[key] = dir
-            continue
+    // Folds every pair of stops that is really one stop with a different name
+    // on each kerb — see findOppositeKerbs. Applied in rounds because linking
+    // one pair lets the alignment see through to the next.
+    case 'linkOppositeKerbs': {
+      let next = state
+      let linked = 0
+      for (let round = 0; round < 4; round++) {
+        const pairs = findOppositeKerbs(next, action.radius ?? 130)
+        if (!pairs.length) break
+        for (const pair of pairs) {
+          const after = linkTwoStops(next, pair.keepId, pair.mergeId)
+          if (after !== next) {
+            next = after
+            linked += 1
           }
-          const entries = dirEntries(dir).map((entry) => {
-            if (entry.stopId === other.id) {
-              return { stopId: keep.id, platformId: entry.platformId ?? otherDefault }
-            }
-            if (entry.stopId === keep.id) {
-              return { stopId: keep.id, platformId: entry.platformId ?? keepDefault }
-            }
-            return entry
-          })
-          dirs[key] = normaliseDirection(fromEntries(entries, dir.legs.slice()))
         }
-        return { ...route, dirs }
-      })
-
-      const overrides = { ...state.overrides }
-      delete overrides[other.id]
-      return { ...state, stops, routes, overrides }
+      }
+      if (!linked) return state
+      return { ...next, lastImport: { added: 0, merged: linked, at: Date.now(), regrouped: true } }
     }
 
     // Undoes a manual link: every platform goes back to a separate stop,
@@ -867,6 +842,102 @@ function deepMerge(base, patch) {
     out[k] = v && typeof v === 'object' && !Array.isArray(v) ? deepMerge(base[k] || {}, v) : v
   }
   return out
+}
+
+// Folds `mergeId` into `keepId`: one stop, both names, every platform kept so
+// route geometry stays on the kerb it was actually drawn to.
+function linkTwoStops(state, keepId, mergeId) {
+  const keep = state.stops.find((s) => s.id === keepId)
+  const other = state.stops.find((s) => s.id === mergeId)
+  if (!keep || !other || keep.id === other.id) return state
+
+  const platforms = [...keep.platforms, ...other.platforms]
+  const lat = platforms.reduce((sum, p) => sum + p.lat, 0) / platforms.length
+  const lon = platforms.reduce((sum, p) => sum + p.lon, 0) / platforms.length
+  const altNames = dedupeNames(
+    [...(keep.altNames || []), other.name, ...(other.altNames || [])],
+    keep.name,
+  )
+  const merged = { ...keep, lat, lon, platforms, altNames }
+
+  const stops = state.stops.filter((s) => s.id !== other.id).map((s) => (s.id === keep.id ? merged : s))
+
+  // A `null` platformId meant "this stop's own (usually only) platform" —
+  // fine before the merge, but the merged stop's centre is now a midpoint
+  // between two platforms, so every existing call has to be pinned to the
+  // platform it actually meant, or routes would silently jump to that
+  // midpoint.
+  const keepDefault = keep.platforms[0]?.id ?? null
+  const otherDefault = other.platforms[0]?.id ?? null
+  const routes = state.routes.map((route) => {
+    const dirs = {}
+    for (const key of ['fwd', 'bwd']) {
+      const dir = route.dirs[key]
+      if (!dir) {
+        dirs[key] = dir
+        continue
+      }
+      const entries = dirEntries(dir).map((entry) => {
+        if (entry.stopId === other.id) {
+          return { stopId: keep.id, platformId: entry.platformId ?? otherDefault }
+        }
+        if (entry.stopId === keep.id) {
+          return { stopId: keep.id, platformId: entry.platformId ?? keepDefault }
+        }
+        return entry
+      })
+      dirs[key] = normaliseDirection(fromEntries(entries, dir.legs.slice()))
+    }
+    return { ...route, dirs }
+  })
+
+  const overrides = { ...state.overrides }
+  delete overrides[other.id]
+  return { ...state, stops, routes, overrides }
+}
+
+// Finds stops that are really one stop with a different name on each kerb —
+// the Gibraltar case, and the single biggest source of mess in a schematic.
+//
+// Left unlinked, such a pair looks to the direction merge like the route
+// genuinely running through different stops each way, so it manufactures a
+// one-way divergence: two near-parallel lines a hair apart, arrows down both,
+// and two labels for one piece of kerb. On the attached Gibraltar network six
+// of the eight divergences were this, not real one-way running.
+//
+// The evidence used is deliberately narrow, because a real one-way gyratory
+// must not be folded away: the two stops have to be swapped *one for one* in
+// the same route's two directions (so the route treats them as the same point
+// in its sequence) and be close enough together to be the same place. Route
+// 3's Rosia Plaza/Schomberg gyratory swaps six stops for five, several hundred
+// metres apart, and is correctly left alone.
+export function findOppositeKerbs(project, radius = 130) {
+  const byId = new Map(project.stops.map((s) => [s.id, s]))
+  const seen = new Set()
+  const pairs = []
+
+  for (const route of project.routes) {
+    const fwd = route.dirs.fwd?.stopIds
+    const bwd = route.dirs.bwd?.stopIds
+    if (!fwd?.length || !bwd?.length) continue
+    const merged = mergeRouteDirections(fwd, bwd)
+    for (let i = 0; i + 1 < merged.branches.length; i += 2) {
+      const runOf = (branch, dirKey) =>
+        branch.stopIds.filter((id) => merged.serves.get(id) === dirKey)
+      const a = runOf(merged.branches[i], 'fwd')
+      const b = runOf(merged.branches[i + 1], 'bwd')
+      if (a.length !== 1 || b.length !== 1) continue
+      const A = byId.get(a[0])
+      const B = byId.get(b[0])
+      if (!A || !B || A.id === B.id) continue
+      if (haversine([A.lat, A.lon], [B.lat, B.lon]) > radius) continue
+      const key = [A.id, B.id].sort().join('|')
+      if (seen.has(key)) continue
+      seen.add(key)
+      pairs.push({ keepId: A.id, mergeId: B.id, names: [A.name, B.name] })
+    }
+  }
+  return pairs
 }
 
 export function migrate(raw) {

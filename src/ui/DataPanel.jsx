@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Field, Section, Toggle } from './controls.jsx'
 import { searchPlaces } from '../services/nominatim.js'
 import { fetchStops, STOP_KINDS } from '../services/overpass.js'
 import { fetchOsmRoute, parseRelationRef } from '../services/osmRoute.js'
 import { haversine } from '../lib/geo.js'
-import { newId } from '../state/project.js'
+import { findOppositeKerbs, newId } from '../state/project.js'
 import { demoProject } from '../sample/demo.js'
 
 export default function DataPanel({
@@ -27,7 +27,10 @@ export default function DataPanel({
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState(null)
   const [filter, setFilter] = useState('')
+  const [kerbRadius, setKerbRadius] = useState(130)
   const abortRef = useRef(null)
+
+  const kerbPairs = useMemo(() => findOppositeKerbs(project, kerbRadius), [project, kerbRadius])
 
   const runSearch = async (e) => {
     e.preventDefault()
@@ -179,6 +182,35 @@ export default function DataPanel({
             🔗 Link two stops
           </button>
         </div>
+        <div className="button-row">
+          <button
+            onClick={() => dispatch({ type: 'linkOppositeKerbs', radius: kerbRadius })}
+            disabled={!kerbPairs.length}
+            title="Finds stops swapped one-for-one between a route's two directions and close enough together to be the same place"
+          >
+            ⇄ Link opposite kerbs{kerbPairs.length ? ` (${kerbPairs.length})` : ''}
+          </button>
+          <input
+            type="number"
+            min={20}
+            max={400}
+            step={10}
+            value={kerbRadius}
+            onChange={(e) => setKerbRadius(Number(e.target.value))}
+            title="How far apart the two kerbs may be, in metres"
+            style={{ width: 70 }}
+          />
+        </div>
+        {kerbPairs.length > 0 && (
+          <p className="muted small">
+            {kerbPairs
+              .slice(0, 4)
+              .map((p) => p.names.join(' ⇄ '))
+              .join(', ')}
+            {kerbPairs.length > 4 ? `, and ${kerbPairs.length - 4} more` : ''}. Linking these stops
+            each pair showing as two lines with arrows where the route actually runs both ways.
+          </p>
+        )}
         {tool === 'link' && (
           <p className="notice ok small">
             Click a stop on the map, then click its differently-named twin. They'll become one
