@@ -1,6 +1,7 @@
-import { memo, useEffect, useRef } from 'react'
+import { memo, useEffect, useId, useRef, useState } from 'react'
 import SignMarkers from './SignMarkers.jsx'
 import { visibleBounds } from './useViewport.js'
+import { normaliseBox } from '../dxf/crop.js'
 
 /**
  * The plan canvas: baked CAD geometry, optional text, and sign markers.
@@ -108,16 +109,23 @@ export default function PlanView({
   viewport,
   hiddenBlocks,
   backdropLayers,
+  cropMode,
+  onCropDrawn,
 }) {
   const { containerRef, size, view, transform, handlers, toWorld, fitTo, wasDrag } = viewport
   const fittedFor = useRef(null)
+  const clipId = useId()
+  // The rectangle currently being dragged out, in world units. Local state
+  // rather than a ref so the outline follows the finger as it moves.
+  const [dragBox, setDragBox] = useState(null)
+  const dragStart = useRef(null)
 
   // Fit the drawing the first time we know both the plan and the viewport size.
   useEffect(() => {
     if (!project || !size.width || !size.height) return
     if (fittedFor.current === project.id) return
     fittedFor.current = project.id
-    fitTo(project.bounds)
+    fitTo(project.crop ?? project.bounds)
   }, [project, size.width, size.height, fitTo])
 
   const hiddenKey = (project?.layers ?? [])
@@ -127,11 +135,47 @@ export default function PlanView({
   const hiddenBlocksKey = [...(hiddenBlocks ?? [])].join('\n')
   const backdropKey = [...(backdropLayers ?? [])].join('\n')
 
+  // Cropping filters whole entities, so a wall that starts inside the region
+  // and runs far outside it is kept in full. Clipping the rendered geometry
+  // as well is what makes the region read as a region rather than as a
+  // slightly smaller drawing.
+  const crop = project?.crop ?? null
+
+  // While drawing a crop box the pan/zoom gestures have to stand down, or the
+  // drag would pan the plan out from under the rectangle being drawn.
+  const cropHandlers = cropMode
+    ? {
+        onPointerDown(event) {
+          event.currentTarget.setPointerCapture?.(event.pointerId)
+          const point = toWorld(event.clientX, event.clientY)
+          dragStart.current = point
+          setDragBox(normaliseBox(point, point))
+        },
+        onPointerMove(event) {
+          if (!dragStart.current) return
+          setDragBox(normaliseBox(dragStart.current, toWorld(event.clientX, event.clientY)))
+        },
+        onPointerUp(event) {
+          if (!dragStart.current) return
+          const box = normaliseBox(dragStart.current, toWorld(event.clientX, event.clientY))
+          dragStart.current = null
+          setDragBox(null)
+          onCropDrawn?.(box)
+        },
+        onPointerCancel() {
+          dragStart.current = null
+          setDragBox(null)
+        },
+      }
+    : handlers
+
+  const outline = dragBox ?? null
+
   return (
     <div
       ref={containerRef}
-      className={`plan ${addMode ? 'plan--adding' : ''}`}
-      {...handlers}
+      className={`plan ${addMode ? 'plan--adding' : ''} ${cropMode ? 'plan--cropping' : ''}`}
+      {...cropHandlers}
       onClick={(event) => {
         if (!addMode || wasDrag()) return
         const point = toWorld(event.clientX, event.clientY)
@@ -139,25 +183,39 @@ export default function PlanView({
       }}
     >
       <svg className="plan__svg" width="100%" height="100%" role="presentation">
+        {crop && (
+          <defs>
+            <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+              <rect
+                x={crop.minX}
+                y={crop.minY}
+                width={crop.maxX - crop.minX}
+                height={crop.maxY - crop.minY}
+              />
+            </clipPath>
+          </defs>
+        )}
         <g transform={transform}>
-          {plan?.paths?.length ? (
-            <LayerPaths
-              paths={plan.paths}
-              hiddenKey={hiddenKey}
-              hiddenBlocksKey={hiddenBlocksKey}
-              backdropKey={backdropKey}
-            />
-          ) : null}
-          {project?.showLabels && plan?.labels?.length ? (
-            <Labels
-              labels={plan.labels}
-              view={view}
-              size={size}
-              hiddenKey={hiddenKey}
-              hiddenBlocksKey={hiddenBlocksKey}
-              backdropKey={backdropKey}
-            />
-          ) : null}
+          <g clipPath={crop ? `url(#${clipId})` : undefined}>
+            {plan?.paths?.length ? (
+              <LayerPaths
+                paths={plan.paths}
+                hiddenKey={hiddenKey}
+                hiddenBlocksKey={hiddenBlocksKey}
+                backdropKey={backdropKey}
+              />
+            ) : null}
+            {project?.showLabels && plan?.labels?.length ? (
+              <Labels
+                labels={plan.labels}
+                view={view}
+                size={size}
+                hiddenKey={hiddenKey}
+                hiddenBlocksKey={hiddenBlocksKey}
+                backdropKey={backdropKey}
+              />
+            ) : null}
+          </g>
           <SignMarkers
             signs={signs}
             view={view}
@@ -167,6 +225,21 @@ export default function PlanView({
               if (!wasDrag()) onSelectSign(id)
             }}
           />
+          {outline && (
+            <rect
+              x={outline.minX}
+              y={outline.minY}
+              width={outline.maxX - outline.minX}
+              height={outline.maxY - outline.minY}
+              fill="var(--accent)"
+              fillOpacity={0.12}
+              stroke="var(--accent)"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              vectorEffect="non-scaling-stroke"
+              style={{ pointerEvents: 'none' }}
+            />
+          )}
         </g>
       </svg>
     </div>

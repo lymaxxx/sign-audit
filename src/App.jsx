@@ -269,6 +269,17 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    actions.exportViewer()
+                    setMenuOpen(false)
+                  }}
+                >
+                  Export viewer (HTML)
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  onClick={() => {
                     const next = prompt('Project name:', project.name)
                     if (next?.trim()) actions.renameProject(next.trim())
                     setMenuOpen(false)

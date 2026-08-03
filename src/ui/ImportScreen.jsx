@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { buildPlan } from '../dxf/flatten.js'
+import { buildPlan, describeUnresolvedInserts } from '../dxf/flatten.js'
 import { looksLikeDxf, parseDxf } from '../dxf/parse.js'
-import { auditDxf, describeLosses, reconcile } from '../dxf/audit.js'
+import { auditDxf, describeLosses, emptyLayers, reconcile } from '../dxf/audit.js'
+import { cropDxf, isUsableBox } from '../dxf/crop.js'
 import { analyseDrawing, buildSigns, suggestRecipe } from '../dxf/detectSigns.js'
 import { unionBounds } from '../dxf/geometry.js'
 import { useStore } from '../state/storeContext.js'
@@ -32,6 +33,8 @@ export default function ImportScreen() {
   const [existing, setExisting] = useState(null)
   const [hidden, setHidden] = useState(() => new Set())
   const [backdrop, setBackdrop] = useState(() => new Set())
+  const [crop, setCrop] = useState(null)
+  const [cropMode, setCropMode] = useState(false)
 
   useEffect(() => {
     db.listProjects()
@@ -53,9 +56,12 @@ export default function ImportScreen() {
       const dxf = parseDxf(text, census)
       const plan = buildPlan(dxf, { fileName: file.name })
       const analysis = analyseDrawing(dxf, plan)
-      const ledger = reconcile(census, plan.stats.rendered, plan.stats.skipped)
 
-      setDraft({ plan, dxf, file, analysis, ledger })
+      // The raw document is kept so narrowing to a region can re-derive
+      // everything from it — cropping filters entities before anything is
+      // baked or detected, so it cannot be applied to an already-built plan.
+      setDraft({ dxf, file, census })
+      setCrop(null)
       setRecipe(suggestRecipe(analysis))
       setHidden(new Set())
       // An XREF is background context by convention — the walls of the
@@ -71,10 +77,25 @@ export default function ImportScreen() {
     }
   }
 
+  // Everything downstream of the crop, rebuilt whenever the region changes so
+  // the geometry, the layer list, the sign list and the bounds all describe
+  // the same scope.
+  const derived = useMemo(() => {
+    if (!draft) return null
+    const cropped = cropDxf(draft.dxf, crop)
+    const plan = buildPlan(cropped, { fileName: draft.file.name })
+    return {
+      plan,
+      analysis: analyseDrawing(cropped, plan),
+      ledger: reconcile(draft.census, plan.stats.rendered, plan.stats.skipped),
+      blank: emptyLayers(draft.census, plan),
+    }
+  }, [draft, crop])
+
   const preview = useMemo(() => {
-    if (!draft || !recipe) return { signs: [], links: [], unlinked: 0 }
-    return buildSigns(draft.analysis, recipe)
-  }, [draft, recipe])
+    if (!derived || !recipe) return { signs: [], links: [], unlinked: 0 }
+    return buildSigns(derived.analysis, recipe)
+  }, [derived, recipe])
 
   // Raw block names whose geometry should never be drawn: callouts classified
   // as "data" and not also "marker" — a self-describing block plays both
@@ -83,8 +104,8 @@ export default function ImportScreen() {
   // alongside the named block they resolve to.
   const hiddenBlocks = useMemo(() => {
     const set = new Set()
-    if (!draft || !recipe) return set
-    for (const insert of draft.analysis.inserts) {
+    if (!derived || !recipe) return set
+    for (const insert of derived.analysis.inserts) {
       if (recipe.tagBlocks.has(insert.effectiveName) && !recipe.markerBlocks.has(insert.effectiveName)) {
         set.add(insert.blockName)
       }
@@ -93,19 +114,20 @@ export default function ImportScreen() {
     // otherwise dangle on the plan, pointing at nothing.
     for (const handle of preview.leaderHandles ?? []) set.add(`leader:${handle}`)
     return set
-  }, [draft, recipe, preview.leaderHandles])
+  }, [derived, recipe, preview.leaderHandles])
 
   // The preview reuses the real plan renderer, so what you approve here is
   // literally what the audit screen will draw.
   const previewProject = useMemo(() => {
-    if (!draft) return null
+    if (!derived) return null
     return {
       id: 'preview',
-      bounds: draft.plan.bounds,
+      bounds: derived.plan.bounds,
+      crop,
       showLabels: true,
-      layers: draft.plan.layers.map((l) => ({ ...l, visible: !hidden.has(l.name) })),
+      layers: derived.plan.layers.map((l) => ({ ...l, visible: !hidden.has(l.name) })),
     }
-  }, [draft, hidden])
+  }, [derived, hidden, crop])
 
   const toggleIn = (set, value) => {
     const next = new Set(set)
@@ -129,20 +151,31 @@ export default function ImportScreen() {
 
   // A layer toggle can hide whatever the view was centred on. Refit to
   // whatever is still visible rather than leaving the viewport looking empty.
+  // Narrowing the region is the same problem, so both drive the same refit.
   const hiddenLayersKey = [...hidden].sort().join('\n')
+  const cropKey = crop ? `${crop.minX},${crop.minY},${crop.maxX},${crop.maxY}` : ''
   useEffect(() => {
-    if (!draft?.plan?.layerBounds) return
-    const bounds = unionBounds(draft.plan.layerBounds, hidden) ?? draft.plan.bounds
-    viewport.fitTo(bounds)
-    // hiddenLayersKey is the real dependency; draft/viewport are stable for
-    // the life of one loaded drawing.
+    if (!derived?.plan?.layerBounds) return
+    if (crop) {
+      viewport.fitTo(crop)
+      return
+    }
+    viewport.fitTo(unionBounds(derived.plan.layerBounds, hidden) ?? derived.plan.bounds)
+    // hiddenLayersKey/cropKey are the real dependencies; derived/viewport are
+    // stable for the life of one loaded drawing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hiddenLayersKey])
+  }, [hiddenLayersKey, cropKey])
+
+  const applyCrop = (box) => {
+    setCropMode(false)
+    // A stray tap rather than a deliberate drag: leave the scope alone.
+    if (isUsableBox(box)) setCrop(box)
+  }
 
   const create = () => {
     actions.createProject({
       name: name.trim() || 'Signage audit',
-      plan: { ...draft.plan, layers: previewProject.layers },
+      plan: { ...derived.plan, layers: previewProject.layers },
       planFile: draft.file,
       signs: preview.signs,
       // Persisted so the real audit screen never draws tag-block geometry
@@ -150,12 +183,14 @@ export default function ImportScreen() {
       // project, not just while setting it up.
       hiddenBlocks: [...hiddenBlocks],
       backdropLayers: [...backdrop],
+      crop,
     })
   }
 
-  if (draft && recipe) {
-    const { plan, analysis, ledger } = draft
+  if (draft && recipe && derived) {
+    const { plan, analysis, ledger, blank } = derived
     const lost = describeLosses(ledger)
+    const unresolved = describeUnresolvedInserts(plan.stats.unresolvedInserts)
 
     return (
       <div className="wizard">
@@ -167,6 +202,7 @@ export default function ImportScreen() {
               {analysis.leaders.length} leader lines
               {lost && <span className="wizard__lost"> · could not read {lost}</span>}
             </p>
+            {unresolved && <p className="muted small wizard__lost">{unresolved}</p>}
           </div>
           <button type="button" className="ghost" onClick={() => setDraft(null)}>
             Start over
@@ -186,12 +222,16 @@ export default function ImportScreen() {
               viewport={viewport}
               hiddenBlocks={hiddenBlocks}
               backdropLayers={backdrop}
+              cropMode={cropMode}
+              onCropDrawn={applyCrop}
             />
             <div className="plan__tools">
               <button
                 type="button"
                 title="Fit plan"
-                onClick={() => viewport.fitTo(unionBounds(plan.layerBounds, hidden) ?? plan.bounds)}
+                onClick={() =>
+                  viewport.fitTo(crop ?? unionBounds(plan.layerBounds, hidden) ?? plan.bounds)
+                }
               >
                 ⤢
               </button>
@@ -201,15 +241,83 @@ export default function ImportScreen() {
               <button type="button" onClick={() => viewport.zoomBy(1 / 1.6)} aria-label="Zoom out">
                 −
               </button>
+              <button
+                type="button"
+                className={cropMode ? 'is-on' : ''}
+                title="Audit only part of this drawing"
+                onClick={() => setCropMode((on) => !on)}
+              >
+                {cropMode ? 'Drag a box' : '⧉'}
+              </button>
             </div>
             <p className="plan__note">
               {preview.signs.length} sign{preview.signs.length === 1 ? '' : 's'} ·{' '}
               {preview.links.length} matched to a callout
               {preview.unlinked > 0 && ` · ${preview.unlinked} without one`}
+              {crop && ' · region only'}
             </p>
           </section>
 
           <aside className="wizard__side">
+            <section className="card__section">
+              <h2>Area of interest</h2>
+              <p className="muted small">
+                A drawing often carries far more than the job — neighbouring buildings, a key
+                plan, other floors. Narrow it down and everything below, the sign list and the
+                exported results all cover only that region.
+              </p>
+              {crop ? (
+                <div className="crop">
+                  <span className="crop__state">
+                    Region set · {Math.round(crop.maxX - crop.minX).toLocaleString()} ×{' '}
+                    {Math.round(crop.maxY - crop.minY).toLocaleString()} units
+                  </span>
+                  <div className="crop__actions">
+                    <button type="button" className="chip" onClick={() => setCropMode(true)}>
+                      Redraw
+                    </button>
+                    <button type="button" className="chip" onClick={() => setCrop(null)}>
+                      Use whole drawing
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className={cropMode ? 'chip is-on' : 'chip'}
+                  onClick={() => setCropMode((on) => !on)}
+                >
+                  {cropMode ? 'Now drag a box on the plan…' : 'Select an area on the plan'}
+                </button>
+              )}
+            </section>
+
+            {blank.length > 0 && (
+              <section className="card__section">
+                <h2>Layers that drew nothing</h2>
+                <p className="muted small">
+                  These layers are named in the file but produced no geometry. A layer whose
+                  entities are all inside block definitions — or that has none at all — was never
+                  in this DXF to draw: that is what an external reference looks like when it was
+                  not bound before export.
+                </p>
+                <ul className="layers">
+                  {blank.map((row) => (
+                    <li key={row.layer}>
+                      <span className="layers__name">
+                        {row.layer}
+                        <span className="blocks__meta">
+                          {' '}
+                          {row.inModelSpace} in model space, {row.inBlocks} inside blocks
+                          {row.neverInModelSpace && ' — nothing to draw'}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             <section className="card__section">
               <h2>Blocks</h2>
               <p className="muted small">

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 import { parseDxf, looksLikeDxf } from '../src/dxf/parse.js'
 import { auditDxf, reconcile } from '../src/dxf/audit.js'
-import { buildPlan } from '../src/dxf/flatten.js'
+import { buildPlan, describeUnresolvedInserts } from '../src/dxf/flatten.js'
 import { analyseDrawing, buildSigns, suggestRecipe } from '../src/dxf/detectSigns.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -46,6 +46,8 @@ console.log(
   `  baked paths          ${plan.paths.length} (${plan.paths.filter((p) => p.filled).length} filled)`,
 )
 console.log(`  text labels          ${plan.labels.length}`)
+const unresolvedMessage = describeUnresolvedInserts(plan.stats.unresolvedInserts)
+if (unresolvedMessage) console.log(`  unresolved blocks    ${unresolvedMessage}`)
 console.log(
   `  bounds               ${plan.bounds.minX.toFixed(1)}, ${plan.bounds.minY.toFixed(1)} → ` +
     `${plan.bounds.maxX.toFixed(1)}, ${plan.bounds.maxY.toFixed(1)}`,
@@ -113,9 +115,10 @@ check(
   JSON.stringify(byType),
 )
 // Ten named block markers + SIGN_ASSEMBLY (self-describing, unlinked) + a
-// loose circle marker and a loose rectangle marker, each linked through its
-// leader to its own TAG_HEAD.
-check('thirteen signs, no nested double-count', signs.length === 13, `got ${signs.length}`)
+// loose circle marker, a loose rectangle drawn as one closed polyline, and a
+// loose rectangle drawn as four separate LINE entities — each linked through
+// its own leader to its own TAG_HEAD.
+check('fourteen signs, no nested double-count', signs.length === 14, `got ${signs.length}`)
 const loose = signs.filter((s) => s.source === 'loose')
 check(
   'loose circle marker linked through its leader',
@@ -123,13 +126,18 @@ check(
   JSON.stringify(loose),
 )
 check(
-  'loose rectangle marker linked through its leader',
+  'loose rectangle marker (one polyline) linked through its leader',
   loose.some((s) => s.name === 'LOOSE_02'),
   JSON.stringify(loose),
 )
 check(
+  'loose rectangle marker (four separate lines) linked through its leader',
+  loose.some((s) => s.name === 'LOOSE_03'),
+  JSON.stringify(loose),
+)
+check(
   'leaders that link a marker to a tag are marked for hiding',
-  leaderHandles.size >= 2,
+  leaderHandles.size >= 3,
   `got ${leaderHandles.size}`,
 )
 check(
@@ -164,6 +172,11 @@ check(
   'bounds cover the 40x22 building',
   plan.bounds.minX <= 0 && plan.bounds.maxX >= 40 && plan.bounds.maxY >= 22,
   JSON.stringify(plan.bounds),
+)
+check(
+  'no false positives: every fixture INSERT resolves to real geometry',
+  Object.keys(plan.stats.unresolvedInserts).length === 0,
+  JSON.stringify(plan.stats.unresolvedInserts),
 )
 
 check(
@@ -244,6 +257,41 @@ try {
   check('an empty drawing imports as an empty plan', empty.stats.entities === 0 && empty.paths.length === 0)
 } catch (error) {
   check('an empty drawing imports as an empty plan', false, error.message)
+}
+
+// An INSERT referencing a block with no geometry — an unbound external
+// reference (xref) in a plain "Save As DXF" looks exactly like this — must
+// not render anything, but should say why instead of vanishing silently.
+try {
+  const unresolved = buildPlan(
+    {
+      entities: [
+        {
+          type: 'INSERT',
+          name: 'MISSING_XREF',
+          layer: '_XREF_MP',
+          handle: '1',
+          position: { x: 0, y: 0 },
+          attribs: [],
+        },
+      ],
+      blocks: {},
+      tables: {},
+    },
+    {},
+  )
+  check(
+    'an unresolved block reference is reported, not silently dropped',
+    unresolved.stats.unresolvedInserts.MISSING_XREF?.count === 1 &&
+      unresolved.stats.unresolvedInserts.MISSING_XREF?.layers?.includes('_XREF_MP'),
+    JSON.stringify(unresolved.stats.unresolvedInserts),
+  )
+  check(
+    'the unresolved-block message names the layer',
+    describeUnresolvedInserts(unresolved.stats.unresolvedInserts)?.includes('_XREF_MP') ?? false,
+  )
+} catch (error) {
+  check('an unresolved block reference is reported, not silently dropped', false, error.message)
 }
 
 

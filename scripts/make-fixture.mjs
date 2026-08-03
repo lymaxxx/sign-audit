@@ -400,6 +400,46 @@ section('ENTITIES', () => {
 
   g(0, 'SEQEND')
   g(8, 'TEXT')
+
+  // A loose rectangular sign marker drawn as four separate LINE entities
+  // rather than one closed polyline — some drawings build the rectangle this
+  // way instead, with no single entity tying the four sides together.
+  line('_WAYFINDING_SIGN', 8.6, 19.6, 9.4, 19.6)
+  line('_WAYFINDING_SIGN', 9.4, 19.6, 9.4, 20.4)
+  line('_WAYFINDING_SIGN', 9.4, 20.4, 8.6, 20.4)
+  line('_WAYFINDING_SIGN', 8.6, 20.4, 8.6, 19.6)
+  g(0, 'POINT')
+  g(8, '_WAYFINDING_SIGN')
+  g(10, 9)
+  g(20, 20)
+  g(30, 0)
+
+  lwpolyline('TEXT', [
+    [9.4, 20],
+    [11, 20],
+    [12, 20],
+  ], false)
+
+  g(0, 'INSERT')
+  g(8, 'TEXT')
+  g(2, 'TAG_HEAD')
+  g(10, 12)
+  g(20, 20)
+  g(30, 0)
+  g(50, 0)
+
+  g(0, 'ATTRIB')
+  g(8, 'TEXT')
+  g(10, 12)
+  g(20, 20.3)
+  g(30, 0)
+  g(40, 0.25)
+  g(1, 'LOOSE_03')
+  g(2, 'NAME')
+  g(70, 0)
+
+  g(0, 'SEQEND')
+  g(8, 'TEXT')
 })
 
 g(0, 'EOF')

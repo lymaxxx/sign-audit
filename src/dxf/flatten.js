@@ -73,6 +73,42 @@ function resolveColor(entity, layerColor, blockColor) {
   return toHex(entity.color) ?? layerColor
 }
 
+/**
+ * Look up a block definition, tolerating a name that differs only in case or
+ * surrounding whitespace before concluding the reference is genuinely
+ * unresolved. A block that plain doesn't match at all (most commonly an
+ * external reference that was never bound before exporting to DXF, so its
+ * geometry lives only in a file this DXF never embedded) is reported via
+ * `unresolvedInserts`, below, rather than silently drawing nothing.
+ */
+function resolveBlock(blocks, name) {
+  if (!name) return undefined
+  if (blocks?.[name]) return blocks[name]
+  const trimmed = name.trim().toLowerCase()
+  for (const [key, value] of Object.entries(blocks ?? {})) {
+    if (key.trim().toLowerCase() === trimmed) return value
+  }
+  return undefined
+}
+
+/**
+ * One-line summary of `plan.stats.unresolvedInserts` for the import screen —
+ * block references with nothing to draw, most often an external reference
+ * (xref) that was never bound before the file was exported to DXF.
+ */
+export function describeUnresolvedInserts(unresolvedInserts) {
+  const entries = Object.entries(unresolvedInserts ?? {})
+  if (!entries.length) return null
+  const total = entries.reduce((sum, [, r]) => sum + r.count, 0)
+  const layers = [...new Set(entries.flatMap(([, r]) => r.layers))]
+  return (
+    `${total} block reference${total === 1 ? '' : 's'} on layer${layers.length === 1 ? '' : 's'} ` +
+    `${layers.join(', ')} ${total === 1 ? 'has' : 'have'} no geometry to draw — most likely an ` +
+    `external reference (xref) that was never bound before this file was exported to DXF. Bind ` +
+    `it in your CAD application (or ask whoever maintains the drawing to) and re-export.`
+  )
+}
+
 /** Array (MINSERT) offsets for a block reference; a single [0,0] for plain ones. */
 function insertGrid(insert) {
   const cols = Math.max(1, Math.min(insert.columnCount || 1, 100))
@@ -112,6 +148,8 @@ export function buildPlan(dxf, meta = {}) {
   const unsupported = new Map()
   const rendered = new Map()
   const skipped = new Map()
+  // INSERTs whose block has no geometry at all — see `resolveBlock` above.
+  const unresolvedInserts = new Map()
   const usedLayers = new Set()
   let entityCount = 0
 
@@ -167,7 +205,8 @@ export function buildPlan(dxf, meta = {}) {
       const color = resolveColor(entity, layerColor, inheritedColor)
 
       if (entity.type === 'INSERT') {
-        const block = dxf.blocks?.[entity.name]
+        const block = resolveBlock(dxf.blocks, entity.name)
+        const hasGeometry = Boolean(block?.entities?.length)
         for (const [ox, oy] of insertGrid(entity)) {
           const placed =
             ox || oy
@@ -182,11 +221,22 @@ export function buildPlan(dxf, meta = {}) {
           const local = multiply(matrix, insertMatrix(placed, block?.position))
           const innerText = []
 
-          if (block?.entities?.length && depth < MAX_BLOCK_DEPTH) {
+          if (hasGeometry && depth < MAX_BLOCK_DEPTH) {
             walk(block.entities, local, depth + 1, layer, color, innerText, [
               ...blockPath,
               entity.name ?? '',
             ])
+          } else if (!hasGeometry) {
+            // Most often an attached-but-unbound external reference (xref):
+            // the block is defined but empty because its actual geometry
+            // lives only in a file this DXF never embedded. Surfaced via
+            // `plan.stats.unresolvedInserts` so a layer that silently shows
+            // nothing has an explanation instead of just being a mystery.
+            const key = entity.name ?? '(unnamed)'
+            const record = unresolvedInserts.get(key) ?? { count: 0, layers: new Set() }
+            record.count++
+            record.layers.add(layer)
+            unresolvedInserts.set(key, record)
           }
 
           const attribs = {}
@@ -327,6 +377,12 @@ export function buildPlan(dxf, meta = {}) {
       // anything the parser dropped instead of claiming nothing was lost.
       rendered: Object.fromEntries(rendered),
       skipped: Object.fromEntries(skipped),
+      unresolvedInserts: Object.fromEntries(
+        [...unresolvedInserts].map(([name, record]) => [
+          name,
+          { count: record.count, layers: [...record.layers] },
+        ]),
+      ),
     },
   }
 }

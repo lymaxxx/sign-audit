@@ -368,6 +368,37 @@ textarea {
   cursor: crosshair;
 }
 
+.plan--cropping {
+  cursor: crosshair;
+}
+
+.plan--cropping::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 2px dashed var(--accent);
+  border-radius: 4px;
+}
+
+.crop {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.crop__state {
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.crop__actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
 .plan--adding::after {
   content: '';
   position: absolute;
