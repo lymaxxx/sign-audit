@@ -742,3 +742,69 @@ input[type='checkbox'] {
   opacity: 0.45;
   cursor: default;
 }
+
+.queue-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.queue-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.queue-list li:hover {
+  background: var(--panel-2);
+}
+
+.queue-list .badge {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.queue-list li.fetching .badge {
+  background: #2b3a5c;
+  color: var(--text);
+}
+
+.queue-list li.done .badge {
+  background: #235c3f;
+  color: #b9f2d4;
+}
+
+.queue-list li.error .badge {
+  background: #6b2b2b;
+  color: #ffbdbd;
+}
+
+.queue-list .name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.queue-list .counts {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.queue-list .counts.err {
+  color: #ffbdbd;
+}

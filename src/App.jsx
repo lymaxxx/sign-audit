@@ -36,6 +36,11 @@ export default function App() {
   const [focus, setFocus] = useState(null)
   const [insertAt, setInsertAt] = useState(null)
   const [linking, setLinking] = useState(null)
+  // Lives up here rather than inside the import panel: adding a batch jumps to
+  // the Routes tab, which unmounts DataPanel, and a queue that evaporated on
+  // that jump would take any row that failed to fetch with it — exactly the
+  // re-typing the queue exists to avoid.
+  const [importQueue, setImportQueue] = useState([])
   const [basemap, setBasemap] = useState('light')
   const fileRef = useRef(null)
   const routing = useAutoRouting(project, dispatch)
@@ -197,6 +202,8 @@ export default function App() {
                 setFocus={setFocus}
                 selectedStopId={selectedStopId}
                 onSelectStop={setSelectedStopId}
+                importQueue={importQueue}
+                setImportQueue={setImportQueue}
                 onRouteImported={(routeId) => {
                   setTab('routes')
                   setSelectedRouteId(routeId)
